@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1768595608842,
+      "tag": "0000_bitter_puff_adder",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1768595746002,
+      "tag": "0001_moaning_lifeguard",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1768669005528,
+      "tag": "0002_misty_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1768674596540,
+      "tag": "0003_loud_baron_strucker",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1768676814013,
+      "tag": "0004_flawless_stone_men",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1785429639488,
+      "tag": "0005_slippery_the_executioner",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1787674889501,
+      "tag": "0006_abandoned_warstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1787677480941,
+      "tag": "0007_modern_smiling_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1787683525299,
+      "tag": "0008_magenta_whiplash",
+      "breakpoints": true
+    }
+  ]
+}
