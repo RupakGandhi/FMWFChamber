@@ -43,7 +43,13 @@ async function startServer() {
       createContext,
       onError({ path, error }) {
         console.error(`[tRPC] ${path ?? "<no-path>"}:`, error.message);
-        if (error.cause) console.error("[tRPC] cause:", error.cause);
+        let cause: unknown = error.cause;
+        let depth = 0;
+        while (cause instanceof Error && depth < 5) {
+          console.error(`[tRPC] cause[${depth}]:`, cause.message, JSON.stringify(cause, Object.getOwnPropertyNames(cause)));
+          cause = cause.cause;
+          depth++;
+        }
       },
     })
   );
