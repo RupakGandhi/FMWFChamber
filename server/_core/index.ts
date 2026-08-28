@@ -41,6 +41,10 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError({ path, error }) {
+        console.error(`[tRPC] ${path ?? "<no-path>"}:`, error.message);
+        if (error.cause) console.error("[tRPC] cause:", error.cause);
+      },
     })
   );
   // development mode uses Vite, production mode uses static files
