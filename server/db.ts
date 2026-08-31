@@ -40,6 +40,38 @@ function parseJsonColumn(raw: string | null): unknown {
   }
 }
 
+// Defense in depth: the typeCast above has proven unreliable on Hostinger's
+// production MySQL/MariaDB under Drizzle's prepared-statement query path
+// (works in isolated scripts, not through the live pooled app connection —
+// root cause not fully pinned down). Explicitly re-hydrate JSON columns here
+// on every row so program/application data is correct regardless of what the
+// driver already did.
+function hydrateJsonFields<T extends Record<string, unknown>>(row: T, fields: readonly string[]): T {
+  for (const field of fields) {
+    const value = row[field];
+    if (typeof value === "string") {
+      try {
+        (row as Record<string, unknown>)[field] = JSON.parse(value);
+      } catch {
+        // leave as-is if it doesn't parse
+      }
+    }
+  }
+  return row;
+}
+
+function hydrateJsonRows<T extends Record<string, unknown>>(rows: T[], fields: readonly string[]): T[] {
+  for (const row of rows) hydrateJsonFields(row, fields);
+  return rows;
+}
+
+const PROGRAM_JSON_FIELDS = ["formConfig", "scoringConfig", "emailConfig", "settings"] as const;
+const APPLICATION_JSON_FIELDS = ["formData"] as const;
+const SCORE_JSON_FIELDS = ["criteriaScores"] as const;
+const ARCHIVE_JSON_FIELDS = ["data"] as const;
+const PARTICIPANT_FORM_JSON_FIELDS = ["attendees"] as const;
+const USER_JSON_FIELDS = ["calendarSettings"] as const;
+
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
@@ -114,14 +146,14 @@ export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  return result.length > 0 ? hydrateJsonFields(result[0], USER_JSON_FIELDS) : undefined;
 }
 
 export async function getUserByUsername(username: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], USER_JSON_FIELDS) : undefined;
 }
 
 export async function listNativeStaffUsers() {
@@ -208,17 +240,17 @@ export async function updateProgram(id: number, data: Partial<InsertProgram>) {
 export async function getPrograms(status?: string) {
   const db = await getDb();
   if (!db) return [];
-  if (status) {
-    return db.select().from(programs).where(eq(programs.status, status as any)).orderBy(desc(programs.year), asc(programs.name));
-  }
-  return db.select().from(programs).orderBy(desc(programs.year), asc(programs.name));
+  const rows = status
+    ? await db.select().from(programs).where(eq(programs.status, status as any)).orderBy(desc(programs.year), asc(programs.name))
+    : await db.select().from(programs).orderBy(desc(programs.year), asc(programs.name));
+  return hydrateJsonRows(rows, PROGRAM_JSON_FIELDS);
 }
 
 export async function getProgramById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(programs).where(eq(programs.id, id)).limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], PROGRAM_JSON_FIELDS) : undefined;
 }
 
 export async function getProgramBySlug(slug: string) {
@@ -226,9 +258,9 @@ export async function getProgramBySlug(slug: string) {
   if (!db) return undefined;
   // Try exact match first
   const result = await db.select().from(programs).where(eq(programs.slug, slug)).limit(1);
-  if (result[0]) return result[0];
+  if (result[0]) return hydrateJsonFields(result[0], PROGRAM_JSON_FIELDS);
   // Fallback: try word-based fuzzy match (e.g., "military-appreciation-2026" matches "military-appreciation-night-2026")
-  const allPrograms = await db.select().from(programs);
+  const allPrograms = hydrateJsonRows(await db.select().from(programs), PROGRAM_JSON_FIELDS);
   const inputWords = slug.split('-').filter(w => w.length > 2);
   const match = allPrograms.find(p => {
     const slugWords = p.slug.split('-');
@@ -275,21 +307,21 @@ export async function createApplication(application: Omit<InsertApplication, 'ap
 export async function getApplicationsByProgram(programId: number, status?: string) {
   const db = await getDb();
   if (!db) return [];
-  if (status) {
-    return db.select().from(applications)
-      .where(and(eq(applications.programId, programId), eq(applications.status, status as any)))
-      .orderBy(desc(applications.submittedAt));
-  }
-  return db.select().from(applications)
-    .where(eq(applications.programId, programId))
-    .orderBy(desc(applications.submittedAt));
+  const rows = status
+    ? await db.select().from(applications)
+        .where(and(eq(applications.programId, programId), eq(applications.status, status as any)))
+        .orderBy(desc(applications.submittedAt))
+    : await db.select().from(applications)
+        .where(eq(applications.programId, programId))
+        .orderBy(desc(applications.submittedAt));
+  return hydrateJsonRows(rows, APPLICATION_JSON_FIELDS);
 }
 
 export async function getApplicationById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(applications).where(eq(applications.id, id)).limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], APPLICATION_JSON_FIELDS) : undefined;
 }
 
 export async function getApplicationByParticipantToken(token: string) {
@@ -298,7 +330,7 @@ export async function getApplicationByParticipantToken(token: string) {
   const result = await db.select().from(applications)
     .where(eq(applications.participantAccessToken, token))
     .limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], APPLICATION_JSON_FIELDS) : undefined;
 }
 
 export async function updateApplication(id: number, data: Partial<InsertApplication>) {
@@ -597,7 +629,8 @@ export async function submitScore(score: InsertScore) {
 export async function getScoresByApplication(applicationId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(scores).where(eq(scores.applicationId, applicationId));
+  const rows = await db.select().from(scores).where(eq(scores.applicationId, applicationId));
+  return hydrateJsonRows(rows, SCORE_JSON_FIELDS);
 }
 
 export async function getScoreByReviewerAndApplication(reviewerId: number, applicationId: number) {
@@ -606,7 +639,7 @@ export async function getScoreByReviewerAndApplication(reviewerId: number, appli
   const result = await db.select().from(scores)
     .where(and(eq(scores.reviewerId, reviewerId), eq(scores.applicationId, applicationId)))
     .limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], SCORE_JSON_FIELDS) : undefined;
 }
 
 // Email log queries
@@ -627,15 +660,16 @@ export async function updateEmailLog(id: number, data: Partial<InsertEmailLog>) 
 export async function getApplicationsForExport(programId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(applications)
+  const rows = await db.select().from(applications)
     .where(eq(applications.programId, programId))
     .orderBy(asc(applications.rank), desc(applications.averageScore));
+  return hydrateJsonRows(rows, APPLICATION_JSON_FIELDS);
 }
 
 export async function getScoresForExport(programId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select({
+  const rows = await db.select({
     applicationId: scores.applicationId,
     applicationNumber: applications.applicationNumber,
     applicantName: applications.applicantName,
@@ -651,6 +685,7 @@ export async function getScoresForExport(programId: number) {
     .innerJoin(reviewers, eq(scores.reviewerId, reviewers.id))
     .where(eq(applications.programId, programId))
     .orderBy(asc(applications.rank));
+  return hydrateJsonRows(rows, SCORE_JSON_FIELDS);
 }
 
 // Stats queries
@@ -669,7 +704,7 @@ export function getTicketCountFromFormData(formData: Record<string, unknown> | n
 export async function getTotalTicketsByProgram(programId: number, ticketFieldId?: string): Promise<{ totalTickets: number; applicationCount: number }> {
   const db = await getDb();
   if (!db) return { totalTickets: 0, applicationCount: 0 };
-  const apps = await db.select().from(applications).where(eq(applications.programId, programId));
+  const apps = hydrateJsonRows(await db.select().from(applications).where(eq(applications.programId, programId)), APPLICATION_JSON_FIELDS);
   let totalTickets = 0;
   for (const app of apps) {
     totalTickets += getTicketCountFromFormData(app.formData as Record<string, unknown> | null, ticketFieldId);
@@ -689,8 +724,11 @@ export async function getAllocatedCapacityByProgram(
   const db = await getDb();
   if (!db) return { allocated: 0, acceptedApplications: 0 };
 
-  const accepted = await db.select().from(applications)
-    .where(and(eq(applications.programId, programId), eq(applications.status, 'accepted')));
+  const accepted = hydrateJsonRows(
+    await db.select().from(applications)
+      .where(and(eq(applications.programId, programId), eq(applications.status, 'accepted'))),
+    APPLICATION_JSON_FIELDS,
+  );
 
   let allocated = 0;
   for (const app of accepted) {
@@ -707,14 +745,14 @@ export async function getAllocatedCapacityByProgram(
 export async function getProgramStats(programId: number) {
   const db = await getDb();
   if (!db) return null;
-  const apps = await db.select().from(applications).where(eq(applications.programId, programId));
+  const apps = hydrateJsonRows(await db.select().from(applications).where(eq(applications.programId, programId)), APPLICATION_JSON_FIELDS);
   const totalApplications = apps.length;
   const reviewed = apps.filter(a => (a.reviewCount || 0) > 0).length;
   const pending = apps.filter(a => a.status === 'submitted').length;
   const avgScore = apps.reduce((sum, a) => sum + parseFloat(a.averageScore || '0'), 0) / (apps.length || 1);
-  
+
   // Calculate total tickets for registration programs
-  const program = await db.select().from(programs).where(eq(programs.id, programId)).limit(1);
+  const program = hydrateJsonRows(await db.select().from(programs).where(eq(programs.id, programId)).limit(1), PROGRAM_JSON_FIELDS);
   let totalTickets: number | undefined;
   if (program[0]?.programType === 'registration') {
     const settings = program[0].settings as any;
@@ -804,7 +842,7 @@ export async function getUserById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], USER_JSON_FIELDS) : undefined;
 }
 
 // Application management (delete, bulk delete, reset)
@@ -890,7 +928,7 @@ export async function getApplicationByNumber(applicationNumber: string) {
   const result = await db.select().from(applications)
     .where(eq(applications.applicationNumber, applicationNumber))
     .limit(1);
-  return result[0];
+  return result[0] ? hydrateJsonFields(result[0], APPLICATION_JSON_FIELDS) : undefined;
 }
 
 // Get application with program info for status lookup
@@ -1034,11 +1072,11 @@ export async function archiveProgram(programId: number, archivedBy: number) {
   if (!program) throw new Error("Program not found");
   
   // Gather all data for this program
-  const apps = await db.select().from(applications).where(eq(applications.programId, programId));
-  const allScores = await db.select().from(scores).where(eq(scores.programId, programId));
+  const apps = hydrateJsonRows(await db.select().from(applications).where(eq(applications.programId, programId)), APPLICATION_JSON_FIELDS);
+  const allScores = hydrateJsonRows(await db.select().from(scores).where(eq(scores.programId, programId)), SCORE_JSON_FIELDS);
   const allAssignments = await db.select().from(reviewerAssignments).where(eq(reviewerAssignments.programId, programId));
   const allCheckins = await db.select().from(checkins).where(eq(checkins.programId, programId));
-  const allParticipantForms = await db.select().from(participantForms).where(eq(participantForms.programId, programId));
+  const allParticipantForms = hydrateJsonRows(await db.select().from(participantForms).where(eq(participantForms.programId, programId)), PARTICIPANT_FORM_JSON_FIELDS);
   
   // Get unique reviewer IDs from assignments
   const reviewerIds = Array.from(new Set(allAssignments.map(a => a.reviewerId)));
@@ -1071,19 +1109,19 @@ export async function archiveProgram(programId: number, archivedBy: number) {
 export async function getArchives(programId?: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  if (programId) {
-    return db.select().from(archives).where(eq(archives.programId, programId)).orderBy(desc(archives.archivedAt));
-  }
-  return db.select().from(archives).orderBy(desc(archives.archivedAt));
+
+  const rows = programId
+    ? await db.select().from(archives).where(eq(archives.programId, programId)).orderBy(desc(archives.archivedAt))
+    : await db.select().from(archives).orderBy(desc(archives.archivedAt));
+  return hydrateJsonRows(rows, ARCHIVE_JSON_FIELDS);
 }
 
 export async function getArchiveById(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   const [archive] = await db.select().from(archives).where(eq(archives.id, id));
-  return archive || null;
+  return archive ? hydrateJsonFields(archive, ARCHIVE_JSON_FIELDS) : null;
 }
 
 // ============ PHASE 2: Check-in Functions ============
@@ -1270,15 +1308,17 @@ export async function submitParticipantForm(data: Omit<InsertParticipantForm, 'i
 export async function getParticipantFormsByApplication(applicationId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  return db.select().from(participantForms).where(eq(participantForms.applicationId, applicationId));
+
+  const rows = await db.select().from(participantForms).where(eq(participantForms.applicationId, applicationId));
+  return hydrateJsonRows(rows, PARTICIPANT_FORM_JSON_FIELDS);
 }
 
 export async function getParticipantFormsByProgram(programId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
-  return db.select().from(participantForms).where(eq(participantForms.programId, programId));
+
+  const rows = await db.select().from(participantForms).where(eq(participantForms.programId, programId));
+  return hydrateJsonRows(rows, PARTICIPANT_FORM_JSON_FIELDS);
 }
 
 export async function updateParticipantForm(id: number, data: Partial<InsertParticipantForm>) {
@@ -1307,9 +1347,9 @@ export async function updateScore(scoreId: number, data: { criteriaScores?: any;
 export async function getScoreById(scoreId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  
+
   const [score] = await db.select().from(scores).where(eq(scores.id, scoreId));
-  return score || null;
+  return score ? hydrateJsonFields(score, SCORE_JSON_FIELDS) : null;
 }
 
 // T-shirt inventory summary
