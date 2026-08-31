@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
-import { Search, CheckCircle, Clock, Calendar, MapPin, Video, ArrowLeft, FileText } from "lucide-react";
+import { Search, CheckCircle, Clock, MapPin, Video, ArrowLeft, FileText } from "lucide-react";
 
 const statusConfig: Record<string, { label: string; color: string; icon: any; description: string }> = {
   submitted: {
@@ -20,12 +20,6 @@ const statusConfig: Record<string, { label: string; color: string; icon: any; de
     color: "bg-yellow-100 text-yellow-800",
     icon: Clock,
     description: "Your application is currently being reviewed by our selection committee.",
-  },
-  interview: {
-    label: "Interview Scheduled",
-    color: "bg-purple-100 text-purple-800",
-    icon: Calendar,
-    description: "Congratulations! You have been selected for an interview.",
   },
   accepted: {
     label: "Accepted",

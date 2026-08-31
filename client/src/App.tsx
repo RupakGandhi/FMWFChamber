@@ -5,7 +5,6 @@ import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
-import DemoGuide from "./pages/DemoGuide";
 import DemoLogin from "./pages/DemoLogin";
 import StaffLogin from "./pages/StaffLogin";
 import ChangePassword from "./pages/ChangePassword";
@@ -37,13 +36,16 @@ import ParticipantForm from "./pages/public/ParticipantForm";
 import AdminGuidedTour from "./pages/admin/GuidedTour";
 import AdminHelpCenter from "./pages/admin/HelpCenter";
 import AdminStaffAccounts from "./pages/admin/StaffAccounts";
+import AdminFeatureTestingGuide from "./pages/admin/FeatureTestingGuide";
 
 function Router() {
   return (
     <Switch>
       {/* Public pages */}
       <Route path="/" component={Home} />
-      <Route path="/demo-guide" component={DemoGuide} />
+      <Route path="/demo-guide">
+        <Redirect to="/admin/feature-testing-guide" />
+      </Route>
       <Route path="/demo-login" component={DemoLogin} />
       <Route path="/staff-login" component={StaffLogin} />
       <Route path="/change-password" component={ChangePassword} />
@@ -84,6 +86,7 @@ function Router() {
       <Route path="/admin/programs/:programId/waitlist" component={AdminWaitlist} />
       <Route path="/admin/guided-tour" component={AdminGuidedTour} />
       <Route path="/admin/help" component={AdminHelpCenter} />
+      <Route path="/admin/feature-testing-guide" component={AdminFeatureTestingGuide} />
 
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

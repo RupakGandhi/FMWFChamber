@@ -36,8 +36,8 @@ export default function AdminProgramEdit() {
 
   useEffect(() => {
     if (program) {
-      setFormConfig(program.formConfig || { fields: [] });
-      setScoringConfig(program.scoringConfig || { criteria: [] });
+      setFormConfig({ ...program.formConfig, fields: program.formConfig?.fields ?? [] });
+      setScoringConfig({ ...program.scoringConfig, criteria: program.scoringConfig?.criteria ?? [] });
       setSettings(program.settings || { blindReview: true });
     }
   }, [program]);

@@ -7,10 +7,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { 
-  LayoutDashboard, ClipboardList, Users, LogOut, 
+import {
+  LayoutDashboard, ClipboardList, Users, LogOut,
   Menu, X, Home, ChevronRight, BarChart3, Settings, Archive, Flag,
-  Mail, Wrench, HelpCircle, Compass, UserRoundCog
+  Mail, Wrench, HelpCircle, Compass, UserRoundCog, FileCheck
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -57,6 +57,7 @@ const menuSections: MenuSection[] = [
     items: [
       { icon: Compass, label: "Guided Tour", path: "/admin/guided-tour", tier: null },
       { icon: HelpCircle, label: "Help Center", path: "/admin/help", tier: null },
+      { icon: FileCheck, label: "Feature Testing Guide", path: "/admin/feature-testing-guide", tier: null },
     ]
   },
 ];

@@ -94,11 +94,6 @@ export default function Home() {
                 Check Status
               </Button>
             </Link>
-            <Link href="/demo-guide">
-              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-                Demo Guide
-              </Button>
-            </Link>
             {authLoading ? (
               <div className="h-9 w-20 bg-muted animate-pulse rounded-md" />
             ) : isAuthenticated ? (
@@ -142,11 +137,6 @@ export default function Home() {
               <Button variant="ghost" className="w-full justify-start">
                 <Search className="h-4 w-4 mr-2" />
                 Check Status
-              </Button>
-            </Link>
-            <Link href="/demo-guide" onClick={() => setMobileMenuOpen(false)}>
-              <Button variant="ghost" className="w-full justify-start">
-                Demo Guide
               </Button>
             </Link>
             {isAuthenticated && user?.role === 'admin' && (

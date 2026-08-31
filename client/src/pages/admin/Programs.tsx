@@ -5,10 +5,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
-import { Plus, FileEdit, FileText, Copy, ExternalLink, MoreHorizontal, Settings2, Mail, Link2 } from "lucide-react";
+import { Plus, FileEdit, FileText, Copy, ExternalLink, MoreHorizontal, Settings2, Mail, Link2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import AdminLayout from "./AdminLayout";
 import {
@@ -50,6 +60,17 @@ export default function AdminPrograms() {
     onSuccess: () => {
       toast.success('Program duplicated for next year');
       refetch();
+    }
+  });
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const deletePermanentlyMutation = trpc.programs.deletePermanently.useMutation({
+    onSuccess: () => {
+      toast.success('Program permanently deleted');
+      setDeleteTarget(null);
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
     }
   });
 
@@ -247,6 +268,15 @@ export default function AdminPrograms() {
                         }}>
                           Archive
                         </DropdownMenuItem>
+                        {program.status === 'archived' && (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDeleteTarget({ id: program.id, name: program.name })}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete Permanently
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -296,6 +326,31 @@ export default function AdminPrograms() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete "{deleteTarget?.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the program and all of its applications, scores, participant forms,
+              check-ins, waitlist entries, archived snapshots, documents, reminders, and email logs.
+              Applicant Flags are not affected. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deletePermanentlyMutation.isPending}
+              onClick={() => {
+                if (deleteTarget) deletePermanentlyMutation.mutate({ id: deleteTarget.id });
+              }}
+            >
+              Delete Permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AdminLayout>
   );
 }

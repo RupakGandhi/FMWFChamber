@@ -416,7 +416,15 @@ export const appRouter = router({
       const newId = await db.duplicateProgram(input.id, input.newYear);
       return { id: newId };
     }),
-    
+
+    // Permanently removes an archived program and its program-owned records.
+    // Cross-program Applicant Flags are deliberately retained.
+    deletePermanently: adminProcedure.input(z.object({
+      id: z.number(),
+    })).mutation(async ({ input }) => {
+      return db.deleteProgramPermanently(input.id);
+    }),
+
     getStats: adminProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
       return db.getProgramStats(input.id);
     }),

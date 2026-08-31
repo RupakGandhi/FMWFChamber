@@ -68,12 +68,20 @@ export default function ParticipantForm() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!form.participantName.trim()) {
       toast.error("Please enter your full name");
       return;
     }
-    if (attendees.some(attendee => !attendee.name.trim() || !attendee.tshirtSize)) {
+
+    // The primary attendee's name is displayed from form.participantName but
+    // never written back into attendees[0], so sync it here before it's used
+    // for validation or submission.
+    const syncedAttendees = attendees.map((attendee, index) =>
+      index === 0 ? { ...attendee, name: form.participantName } : attendee
+    );
+
+    if (syncedAttendees.some(attendee => !attendee.name.trim() || !attendee.tshirtSize)) {
       toast.error("Please provide a name and T-shirt size for every attendee");
       return;
     }
@@ -82,10 +90,10 @@ export default function ParticipantForm() {
     submitMutation.mutate({
       token,
       participantName: form.participantName,
-      tshirtSize: attendees[0]?.tshirtSize || undefined,
-      plusOne: attendees.length > 1,
-      plusOneName: attendees.length > 1 ? attendees.slice(1).map(a => a.name).join(", ") : undefined,
-      plusOneTshirtSize: attendees.length > 1 ? attendees.slice(1).map(a => a.tshirtSize).join(", ") : undefined,
+      tshirtSize: syncedAttendees[0]?.tshirtSize || undefined,
+      plusOne: syncedAttendees.length > 1,
+      plusOneName: syncedAttendees.length > 1 ? syncedAttendees.slice(1).map(a => a.name).join(", ") : undefined,
+      plusOneTshirtSize: syncedAttendees.length > 1 ? syncedAttendees.slice(1).map(a => a.tshirtSize).join(", ") : undefined,
       namePronunciation: form.namePronunciation || undefined,
       dietaryRestrictions: form.dietaryRestrictions || undefined,
       specialNeeds: form.specialNeeds || undefined,
@@ -93,7 +101,7 @@ export default function ParticipantForm() {
       rank: form.rank || undefined,
       branch: form.branch || undefined,
       yearsOfService: form.yearsOfService || undefined,
-      attendees: attendees.map(a => ({ name: a.name, tshirtSize: a.tshirtSize, relationship: a.relationship })),
+      attendees: syncedAttendees.map(a => ({ name: a.name, tshirtSize: a.tshirtSize, relationship: a.relationship })),
     });
   };
 

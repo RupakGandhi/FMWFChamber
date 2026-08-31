@@ -1,7 +1,8 @@
 import { eq, and, desc, asc, sql, inArray, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { 
-  InsertUser, users, 
+import mysql, { TypeCastField, TypeCastNext } from "mysql2";
+import {
+  InsertUser, users,
   programs, InsertProgram, Program,
   applications, InsertApplication, Application,
   reviewers, InsertReviewer, Reviewer,
@@ -19,12 +20,41 @@ import {
 import { ENV } from './_core/env';
 import { nanoid } from 'nanoid';
 
+// Columns declared as json() in drizzle/schema.ts. Real MySQL auto-parses its
+// native JSON type, but some MySQL-compatible hosts (e.g. MariaDB, where JSON
+// is just a LONGTEXT alias) never report the column as JSON at the protocol
+// level, so mysql2's built-in auto-parsing never triggers and these columns
+// come back as raw strings. Force-parse them here by column name so program
+// configuration and application data hydrate into objects on every host.
+const JSON_COLUMN_NAMES = new Set([
+  "formConfig", "scoringConfig", "emailConfig", "settings",
+  "formData", "criteriaScores", "calendarSettings", "value", "data", "attendees",
+]);
+
+function parseJsonColumn(raw: string | null): unknown {
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
 let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const pool = mysql.createPool({
+        uri: process.env.DATABASE_URL,
+        typeCast(field: TypeCastField, next: TypeCastNext) {
+          if (JSON_COLUMN_NAMES.has(field.name)) {
+            return parseJsonColumn(field.string());
+          }
+          return next();
+        },
+      });
+      _db = drizzle(pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -821,6 +851,38 @@ export async function resetProgramApplications(programId: number, archiveYear?: 
   return apps.length;
 }
 
+/**
+ * Permanently removes an archived program and every program-owned record:
+ * applications, scores, participant forms, check-ins, waitlist entries,
+ * archives, documents, reminders, and email logs. Cross-program Applicant
+ * Flags are deliberately retained. Only permitted for programs already in
+ * `archived` status.
+ */
+export async function deleteProgramPermanently(programId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const program = await getProgramById(programId);
+  if (!program) throw new Error("Program not found");
+  if (program.status !== 'archived') {
+    throw new Error("Only archived programs can be permanently deleted");
+  }
+
+  await db.delete(scores).where(eq(scores.programId, programId));
+  await db.delete(reviewerAssignments).where(eq(reviewerAssignments.programId, programId));
+  await db.delete(checkins).where(eq(checkins.programId, programId));
+  await db.delete(waitlist).where(eq(waitlist.programId, programId));
+  await db.delete(participantForms).where(eq(participantForms.programId, programId));
+  await db.delete(applicationDocuments).where(eq(applicationDocuments.programId, programId));
+  await db.delete(reviewerReminders).where(eq(reviewerReminders.programId, programId));
+  await db.delete(emailLogs).where(eq(emailLogs.programId, programId));
+  await db.delete(archives).where(eq(archives.programId, programId));
+  await db.delete(applications).where(eq(applications.programId, programId));
+  await db.delete(programs).where(eq(programs.id, programId));
+
+  return { success: true };
+}
+
 // Get application by confirmation number (for applicant portal)
 export async function getApplicationByNumber(applicationNumber: string) {
   const db = await getDb();
@@ -1000,7 +1062,9 @@ export async function archiveProgram(programId: number, archivedBy: number) {
     applicationCount: apps.length,
     archivedBy,
   });
-  
+
+  await db.update(programs).set({ status: 'archived' }).where(eq(programs.id, programId));
+
   return result.insertId;
 }
 

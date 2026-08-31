@@ -144,14 +144,14 @@ export default function HelpCenter() {
               </CardContent>
             </Card>
           </Link>
-          <Link href="/demo-guide">
+          <Link href="/admin/feature-testing-guide">
             <Card className="cursor-pointer hover:border-primary/50 transition-colors h-full">
               <CardContent className="p-4 flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                   <FileText className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="font-medium text-sm">Demo & Testing Guide</p>
+                  <p className="font-medium text-sm">Feature Testing Guide</p>
                   <p className="text-xs text-muted-foreground">Step-by-step testing instructions</p>
                 </div>
               </CardContent>
