@@ -362,9 +362,9 @@ export default function PublicApply() {
         {/* Form */}
         <Card>
           <CardHeader>
-            <CardTitle>{steps[currentStep]?.title}</CardTitle>
+            {currentStep > 0 && <CardTitle>{steps[currentStep]?.title}</CardTitle>}
             <CardDescription>
-              {currentStep === 0 
+              {currentStep === 0
                 ? 'Please provide your contact information'
                 : 'Fill out the following questions'}
             </CardDescription>

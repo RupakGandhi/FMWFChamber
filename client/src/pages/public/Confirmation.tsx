@@ -11,6 +11,7 @@ export default function PublicConfirmation() {
     { enabled: !!applicationNumber },
   );
   const isWaitlisted = statusInfo?.status === "waitlist";
+  const isRegistration = statusInfo?.programType === "registration";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-50 to-white">
@@ -33,14 +34,18 @@ export default function PublicConfirmation() {
             <div className="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
               <CheckCircle className="h-10 w-10 text-green-600" />
             </div>
-            <CardTitle className="text-2xl">Application Submitted!</CardTitle>
+            <CardTitle className="text-2xl">
+              {isRegistration ? "Registration Submitted!" : "Application Submitted!"}
+            </CardTitle>
             <CardDescription>
-              Thank you for your application. We have received it successfully.
+              {isWaitlisted
+                ? "Thank you for your submission. We have received it, and it has been placed on the waitlist."
+                : "Thank you for your submission. We have received it successfully."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="bg-muted rounded-lg p-4">
-              <p className="text-sm text-muted-foreground mb-1">Your Application Number</p>
+              <p className="text-sm text-muted-foreground mb-1">Your Confirmation Number</p>
               <p className="text-xl font-mono font-bold">{applicationNumber}</p>
             </div>
 
@@ -59,14 +64,15 @@ export default function PublicConfirmation() {
                 <Mail className="h-5 w-5 shrink-0 text-primary" />
                 <p>
                   If email notifications are enabled for this program, a confirmation email will be sent
-                  to your email address with your application details.
+                  to your email address with your submission details.
                 </p>
               </div>
               <div className="flex gap-3">
                 <CheckCircle className="h-5 w-5 shrink-0 text-primary" />
                 <p>
-                  Your application will be reviewed by our selection committee. We will contact you
-                  regarding the status of your application.
+                  {isRegistration
+                    ? "Chamber staff will review your request and confirm your status. We will contact you regarding the status of your registration."
+                    : "Your application will be reviewed by our selection committee. We will contact you regarding the status of your application."}
                 </p>
               </div>
             </div>
@@ -74,9 +80,27 @@ export default function PublicConfirmation() {
             <div className="pt-4 border-t">
               <h4 className="font-semibold mb-2">What's Next?</h4>
               <ul className="text-sm text-muted-foreground text-left space-y-2">
-                <li>• Your application will be assigned to reviewers</li>
-                <li>• Each reviewer will score your application based on the criteria</li>
-                <li>• Final decisions will be communicated via email</li>
+                {isRegistration ? (
+                  isWaitlisted ? (
+                    <>
+                      <li>• You'll remain on the waitlist until a spot becomes available</li>
+                      <li>• If promoted, you'll receive a secure link to complete your registration details</li>
+                      <li>• Status updates will be communicated via email</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>• Chamber staff will review and confirm your request</li>
+                      <li>• Once confirmed, you'll receive a secure link to complete your registration details</li>
+                      <li>• Status updates will be communicated via email</li>
+                    </>
+                  )
+                ) : (
+                  <>
+                    <li>• Your application will be assigned to reviewers</li>
+                    <li>• Each reviewer will score your application based on the criteria</li>
+                    <li>• Final decisions will be communicated via email</li>
+                  </>
+                )}
               </ul>
             </div>
 

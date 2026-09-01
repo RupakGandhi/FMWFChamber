@@ -68,18 +68,18 @@ export async function notifyOwner(
 ): Promise<boolean> {
   const { title, content } = validatePayload(payload);
 
+  // This optional owner-notification channel only exists on managed Manus
+  // hosting. On external hosts (e.g. Hostinger) it's simply not configured,
+  // which must never block the staff action that triggered it (e.g. waitlist
+  // promotion) — log and report "not delivered" instead of throwing.
   if (!ENV.forgeApiUrl) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service URL is not configured.",
-    });
+    console.warn("[Notification] Skipped: service URL is not configured.");
+    return false;
   }
 
   if (!ENV.forgeApiKey) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service API key is not configured.",
-    });
+    console.warn("[Notification] Skipped: service API key is not configured.");
+    return false;
   }
 
   const endpoint = buildEndpointUrl(ENV.forgeApiUrl);
