@@ -71,7 +71,7 @@ export default function PublicApply() {
   
   // Group fields into steps (sections)
   const steps: { title: string; fields: FormField[] }[] = [];
-  let currentSection = { title: 'Contact Information', fields: [] as FormField[] };
+  let currentSection = { title: 'Application Details', fields: [] as FormField[] };
   
   // First step is always contact info
   steps.push({ title: 'Contact Information', fields: [] });
