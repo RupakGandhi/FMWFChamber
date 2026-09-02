@@ -74,25 +74,63 @@ const USER_JSON_FIELDS = ["calendarSettings"] as const;
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
+function createDb(): ReturnType<typeof drizzle> | null {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    const pool = mysql.createPool({
+      uri: process.env.DATABASE_URL,
+      // Bound how long a single connection attempt can hang before mysql2
+      // gives up, so a slow/unavailable DB fails fast instead of holding a
+      // request (and the process's small connection pool) open indefinitely.
+      connectTimeout: 20000,
+      connectionLimit: 10,
+      waitForConnections: true,
+      queueLimit: 0,
+      // Keep pooled TCP connections alive so the shared-host MySQL/network
+      // layer doesn't silently drop them during idle periods, which would
+      // otherwise surface as a hang on the next request's first query.
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10000,
+      typeCast(field: TypeCastField, next: TypeCastNext) {
+        if (JSON_COLUMN_NAMES.has(field.name)) {
+          return parseJsonColumn(field.string());
+        }
+        return next();
+      },
+    });
+    // mysql2's Pool is an EventEmitter; a background connection error (e.g.
+    // the shared host resetting an idle TCP connection) that nothing listens
+    // for is an unhandled 'error' event, which Node treats as fatal and
+    // crashes the whole process — killing every in-flight request regardless
+    // of route, not just whichever one triggered it. Log and let the pool
+    // recover instead.
+    pool.on("error", (error) => {
+      console.error("[Database] Pool error:", error);
+    });
+    return drizzle(pool);
+  } catch (error) {
+    console.warn("[Database] Failed to connect:", error);
+    return null;
+  }
+}
+
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      const pool = mysql.createPool({
-        uri: process.env.DATABASE_URL,
-        typeCast(field: TypeCastField, next: TypeCastNext) {
-          if (JSON_COLUMN_NAMES.has(field.name)) {
-            return parseJsonColumn(field.string());
-          }
-          return next();
-        },
-      });
-      _db = drizzle(pool);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+  if (!_db) {
+    _db = createDb();
   }
   return _db;
+}
+
+// Establish the pool at process startup rather than lazily on the first
+// incoming request. Without this, whichever request happens to arrive first
+// after a cold process start (e.g. after Hostinger's lsnode recycles an idle
+// process) pays the full connection-setup cost inline and can exceed a tight
+// client/proxy timeout — this has been observed as intermittent request
+// failures on random routes, not any specific endpoint.
+export function warmDb(): void {
+  if (!_db) {
+    _db = createDb();
+  }
 }
 
 // User queries

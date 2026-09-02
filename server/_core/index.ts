@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { warmDb } from "../db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -28,6 +29,11 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Open the DB pool immediately on boot so a cold process start pays the
+  // connection cost before serving requests, not on whichever request lands
+  // first (see warmDb's doc comment for the incident this addresses).
+  warmDb();
+
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
