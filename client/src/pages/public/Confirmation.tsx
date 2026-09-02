@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useParams, Link } from "wouter";
-import { CheckCircle, ClipboardList, Home, Mail, Clock } from "lucide-react";
+import { CheckCircle, ClipboardList, Home, Search, Clock } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
 export default function PublicConfirmation() {
@@ -59,57 +59,55 @@ export default function PublicConfirmation() {
               </div>
             )}
 
-            <div className="text-left space-y-4 text-sm text-muted-foreground">
-              <div className="flex gap-3">
-                <Mail className="h-5 w-5 shrink-0 text-primary" />
-                <p>
-                  If email notifications are enabled for this program, a confirmation email will be sent
-                  to your email address with your submission details.
-                </p>
+            {!isWaitlisted && (
+              <div className="text-left space-y-4 text-sm text-muted-foreground">
+                <div className="flex gap-3">
+                  <Search className="h-5 w-5 shrink-0 text-primary" />
+                  <p>
+                    You can check your status at any time using your confirmation number on the{" "}
+                    <Link href="/status" className="text-primary underline">Check Status</Link> page.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <CheckCircle className="h-5 w-5 shrink-0 text-primary" />
+                  <p>Chamber staff will follow up regarding the status of your submission.</p>
+                </div>
               </div>
-              <div className="flex gap-3">
-                <CheckCircle className="h-5 w-5 shrink-0 text-primary" />
-                <p>
-                  {isRegistration
-                    ? "Chamber staff will review your request and confirm your status. We will contact you regarding the status of your registration."
-                    : "Your application will be reviewed by our selection committee. We will contact you regarding the status of your application."}
-                </p>
-              </div>
-            </div>
+            )}
 
             <div className="pt-4 border-t">
               <h4 className="font-semibold mb-2">What's Next?</h4>
               <ul className="text-sm text-muted-foreground text-left space-y-2">
-                {isRegistration ? (
-                  isWaitlisted ? (
-                    <>
-                      <li>• You'll remain on the waitlist until a spot becomes available</li>
-                      <li>• If promoted, you'll receive a secure link to complete your registration details</li>
-                      <li>• Status updates will be communicated via email</li>
-                    </>
-                  ) : (
-                    <>
-                      <li>• Chamber staff will review and confirm your request</li>
-                      <li>• Once confirmed, you'll receive a secure link to complete your registration details</li>
-                      <li>• Status updates will be communicated via email</li>
-                    </>
-                  )
+                {isWaitlisted ? (
+                  <>
+                    <li>• You'll remain on the waitlist until a spot becomes available</li>
+                    <li>• Chamber staff may contact you if your status changes</li>
+                    <li>• You can check your status anytime using your confirmation number</li>
+                  </>
                 ) : (
                   <>
-                    <li>• Your application will be assigned to reviewers</li>
-                    <li>• Each reviewer will score your application based on the criteria</li>
-                    <li>• Final decisions will be communicated via email</li>
+                    <li>• Chamber staff will review your submission</li>
+                    <li>• You can check your status anytime using your confirmation number</li>
+                    <li>• Chamber staff will contact you with updates</li>
                   </>
                 )}
               </ul>
             </div>
 
-            <Link href="/">
-              <Button className="w-full">
-                <Home className="h-4 w-4 mr-2" />
-                Return to Home
-              </Button>
-            </Link>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Link href="/status" className="flex-1">
+                <Button variant="outline" className="w-full">
+                  <Search className="h-4 w-4 mr-2" />
+                  Check Status
+                </Button>
+              </Link>
+              <Link href="/" className="flex-1">
+                <Button className="w-full">
+                  <Home className="h-4 w-4 mr-2" />
+                  Return to Home
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </main>

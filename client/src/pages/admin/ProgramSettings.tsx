@@ -597,7 +597,8 @@ export default function ProgramSettings() {
             </CardContent>
           </Card>
 
-          {/* Program Capacity & Waitlist */}
+          {/* Program Capacity & Waitlist — event registration programs only */}
+          {program?.programType === 'registration' && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -688,9 +689,10 @@ export default function ProgramSettings() {
               </div>
             </CardContent>
           </Card>
+          )}
 
         </div>
-        
+
         {/* Save Button - Bottom */}
         <div className="flex justify-end pt-4 border-t">
           <Button onClick={handleSaveSettings} disabled={updateSettings.isPending} size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
