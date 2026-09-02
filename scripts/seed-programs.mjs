@@ -125,11 +125,6 @@ const awardsScoringConfig = {
 // Military Appreciation Night Form Configuration
 const militaryFormConfig = {
   fields: [
-    { id: 'heading_contact', type: 'heading', label: 'Contact Information' },
-    { id: 'registrant_name', type: 'text', label: 'Your Name', required: true },
-    { id: 'registrant_email', type: 'email', label: 'Email Address', required: true },
-    { id: 'registrant_phone', type: 'phone', label: 'Phone Number', required: true },
-    
     { id: 'heading_military', type: 'heading', label: 'Military Service Information' },
     { id: 'service_branch', type: 'select', label: 'Branch of Service', required: true, options: [
       { value: 'army', label: 'U.S. Army' },
