@@ -11,9 +11,20 @@
 | Node.js 22 application | Hostinger Node.js App, deployed via LiteSpeed's managed Node process (`lsnode`), on the Hostinger account currently hosting this staging site |
 | MySQL database | MySQL 8.4 instance on the same Hostinger account, accessed at `127.0.0.1:3306` from the application (same-host connection, not exposed externally) |
 | Source repository | `https://github.com/RupakGandhi/FMWFChamber` (GitHub), auto-deploying to Hostinger on push to `main` |
-| Static Apps Hub (`handoff/apps-hub/index.html`) | Not yet deployed. Recommended target is `apps.fmwfchamber.com`, hosted as a static file — this can be served from the same Hostinger account (e.g. via `public_html` on a subdomain) or wherever the Chamber's main site/DNS is already managed. This is a plain static HTML file with no build step or server dependency. |
+| Static Apps Hub (`handoff/apps-hub/index.html`) | Approved, not yet deployed. Confirmed target is `apps.fmwfchamber.com`, hosted as a static file — this can be served from the same Hostinger account (e.g. via `public_html` on a subdomain) or wherever the Chamber's main site/DNS is already managed. It is a plain static HTML file with no build step or server dependency, and already links out to `applications.fmwfchamber.com` (this app) and the existing live `corporatecup.fmwfchamber.com`. |
 
 This matches the architecture already recommended in `docs/final-handoff/docs_retest/hostinger_domain_cutover_plan.md`: OptimizED-managed Hostinger hosting, Chamber-branded subdomains.
+
+## Go-Live Data Sequencing
+
+Per direction from OptimizED: the current staging database (Draft-only Chamber 2027 programs, no real applicant data, no live SMTP) stays in place through contract signature and final staging sign-off. At that point, before Chamber DNS is cut over, the following must happen in order:
+
+1. Provision a **clean production database** (either reset this database or point the app at a new one) — no leftover staging/QA rows.
+2. Configure **real Chamber SMTP credentials** (currently unset/staging placeholders) in hPanel's Environment Variables.
+3. Re-enter the three 2027 program details as final (dates, capacity, form copy) and set each to the desired live status.
+4. Only then proceed to the DNS cutover steps in section (b).
+
+This ordering avoids sending real applicants any email through unconfirmed SMTP, and avoids carrying test data into the production launch.
 
 ## (b) DNS Records for `apps.fmwfchamber.com` and `applications.fmwfchamber.com`
 
@@ -23,8 +34,9 @@ To get them:
 
 1. In hPanel, open the Node.js App for this project → **Domains** (or **Custom Domain**) settings.
 2. Add `applications.fmwfchamber.com` as a custom domain. Hostinger will display the exact record it requires (typically a CNAME to a Hostinger-provided target, occasionally an A record with a specific IP — it varies by plan).
-3. Repeat for wherever the Apps Hub static file will be served (if that's a separate Hostinger property or subdomain rather than folded into the same Node app project, it will have its own record).
-4. Record the exact values below and send them to the Chamber's DNS administrator — do not ask for a bare "redirect."
+3. Repeat for wherever the Apps Hub static file (`apps.fmwfchamber.com`) will be served — if that's a separate Hostinger property or subdomain rather than folded into the same Node app project, it will have its own record.
+4. Since `corporatecup.fmwfchamber.com` is already live under this same `fmwfchamber.com` domain, whoever manages that subdomain's DNS can confirm the record type/pattern the Chamber's DNS host already uses for Chamber subdomains — the new records will very likely follow the same pattern, which is a useful cross-check against whatever hPanel displays in step 2–3.
+5. Record the exact values below and send them to the Chamber's DNS administrator — do not ask for a bare "redirect."
 
 | Subdomain | Purpose | Record type | Record value |
 |---|---|---|---|
