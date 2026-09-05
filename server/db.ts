@@ -82,7 +82,8 @@ function createDb(): ReturnType<typeof drizzle> | null {
       // Bound how long a single connection attempt can hang before mysql2
       // gives up, so a slow/unavailable DB fails fast instead of holding a
       // request (and the process's small connection pool) open indefinitely.
-      connectTimeout: 20000,
+      // Kept well under the 20s ceiling users were seeing in practice.
+      connectTimeout: 8000,
       connectionLimit: 10,
       waitForConnections: true,
       queueLimit: 0,
