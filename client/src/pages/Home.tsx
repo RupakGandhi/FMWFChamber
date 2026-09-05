@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
-import { Users, Award, Shield, ArrowRight, Settings, Clock, Search, Menu, X } from "lucide-react";
+import { Users, Award, Shield, ArrowRight, Settings, Clock, Search, Menu, X, CalendarClock, CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 
 // Calculate days remaining until deadline
@@ -72,6 +72,12 @@ export default function Home() {
   
   // Fetch open programs dynamically (public endpoint - no auth required)
   const { data: openPrograms, isLoading: programsLoading } = trpc.programs.listOpen.useQuery();
+
+  // Reviewer-based programs (leadership/awards) go through scoring; registration
+  // programs (e.g. Military Appreciation Night) are just event sign-up, so the
+  // "Fair Review"/"Expert Reviewers" copy below doesn't apply to them.
+  const hasReviewedPrograms = (openPrograms || []).some(p => p.programType === 'leadership' || p.programType === 'awards');
+  const hasOnlyRegistrationPrograms = (openPrograms || []).length > 0 && !hasReviewedPrograms;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
@@ -191,6 +197,16 @@ export default function Home() {
                 </Card>
               ))}
             </div>
+          ) : (openPrograms || []).length === 0 ? (
+            <div className="text-center py-12 sm:py-16 px-4">
+              <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
+                <CalendarClock className="h-7 w-7 text-slate-400" />
+              </div>
+              <h3 className="text-lg font-semibold text-[#1e3a5f] mb-2">No programs are currently open</h3>
+              <p className="text-sm sm:text-base text-muted-foreground max-w-md mx-auto">
+                There are no applications or registrations open at this time. Please check back soon, or use Check Status above if you've already submitted an application.
+              </p>
+            </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
               {(openPrograms || []).map((program) => {
@@ -255,20 +271,41 @@ export default function Home() {
               <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Easy Applications</h4>
               <p className="text-xs sm:text-sm text-muted-foreground">No account required. Submit in minutes.</p>
             </div>
-            <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#4a90c2]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
-                <Shield className="h-5 w-5 sm:h-7 sm:w-7 text-[#4a90c2]" />
-              </div>
-              <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Fair Review</h4>
-              <p className="text-xs sm:text-sm text-muted-foreground">Blind review ensures fair evaluation.</p>
-            </div>
-            <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#1e3a5f]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
-                <Users className="h-5 w-5 sm:h-7 sm:w-7 text-[#1e3a5f]" />
-              </div>
-              <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Expert Reviewers</h4>
-              <p className="text-xs sm:text-sm text-muted-foreground">Multiple leaders review each app.</p>
-            </div>
+            {hasOnlyRegistrationPrograms ? (
+              <>
+                <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#4a90c2]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Shield className="h-5 w-5 sm:h-7 sm:w-7 text-[#4a90c2]" />
+                  </div>
+                  <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Simple Registration</h4>
+                  <p className="text-xs sm:text-sm text-muted-foreground">Register in just a few minutes.</p>
+                </div>
+                <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#1e3a5f]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <CheckCircle2 className="h-5 w-5 sm:h-7 sm:w-7 text-[#1e3a5f]" />
+                  </div>
+                  <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Instant Confirmation</h4>
+                  <p className="text-xs sm:text-sm text-muted-foreground">Get a confirmation number right away.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#4a90c2]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Shield className="h-5 w-5 sm:h-7 sm:w-7 text-[#4a90c2]" />
+                  </div>
+                  <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Fair Review</h4>
+                  <p className="text-xs sm:text-sm text-muted-foreground">Blind review ensures fair evaluation.</p>
+                </div>
+                <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                  <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#1e3a5f]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
+                    <Users className="h-5 w-5 sm:h-7 sm:w-7 text-[#1e3a5f]" />
+                  </div>
+                  <h4 className="font-semibold mb-1 sm:mb-2 text-[#1e3a5f] text-sm sm:text-base">Expert Reviewers</h4>
+                  <p className="text-xs sm:text-sm text-muted-foreground">Multiple leaders review each app.</p>
+                </div>
+              </>
+            )}
             <div className="text-center p-4 sm:p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-full bg-[#4a90c2]/10 flex items-center justify-center mx-auto mb-3 sm:mb-4">
                 <Award className="h-5 w-5 sm:h-7 sm:w-7 text-[#4a90c2]" />
