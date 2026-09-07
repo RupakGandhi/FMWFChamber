@@ -19,7 +19,6 @@ interface MenuItem {
   icon: any;
   label: string;
   path: string;
-  tier: string | null;
 }
 
 interface MenuSection {
@@ -31,45 +30,36 @@ const menuSections: MenuSection[] = [
   {
     title: "Overview",
     items: [
-      { icon: LayoutDashboard, label: "Dashboard", path: "/admin", tier: null },
-      { icon: ClipboardList, label: "Programs", path: "/admin/programs", tier: null },
+      { icon: LayoutDashboard, label: "Dashboard", path: "/admin" },
+      { icon: ClipboardList, label: "Programs", path: "/admin/programs" },
     ]
   },
   {
     title: "Management",
     items: [
-      { icon: Users, label: "Reviewers", path: "/admin/reviewers", tier: null },
-      { icon: BarChart3, label: "Reviewer Progress", path: "/admin/reviewer-progress", tier: "pro" },
-      { icon: Flag, label: "Applicant Flags", path: "/admin/flags", tier: "enterprise" },
-      { icon: Archive, label: "Archives", path: "/admin/archives", tier: "pro" },
+      { icon: Users, label: "Reviewers", path: "/admin/reviewers" },
+      { icon: BarChart3, label: "Reviewer Progress", path: "/admin/reviewer-progress" },
+      { icon: Flag, label: "Applicant Flags", path: "/admin/flags" },
+      { icon: Archive, label: "Archives", path: "/admin/archives" },
     ]
   },
   {
     title: "System",
     items: [
-      { icon: Mail, label: "Email Configuration", path: "/admin/smtp-settings", tier: null },
-      { icon: UserRoundCog, label: "Staff Accounts", path: "/admin/staff-accounts", tier: null },
-      { icon: Wrench, label: "System Settings", path: "/admin/settings", tier: null },
+      { icon: Mail, label: "Email Configuration", path: "/admin/smtp-settings" },
+      { icon: UserRoundCog, label: "Staff Accounts", path: "/admin/staff-accounts" },
+      { icon: Wrench, label: "System Settings", path: "/admin/settings" },
     ]
   },
   {
     title: "Help & Guidance",
     items: [
-      { icon: Compass, label: "Guided Tour", path: "/admin/guided-tour", tier: null },
-      { icon: HelpCircle, label: "Help Center", path: "/admin/help", tier: null },
-      { icon: FileCheck, label: "Feature Testing Guide", path: "/admin/feature-testing-guide", tier: null },
+      { icon: Compass, label: "Guided Tour", path: "/admin/guided-tour" },
+      { icon: HelpCircle, label: "Help Center", path: "/admin/help" },
+      { icon: FileCheck, label: "Feature Testing Guide", path: "/admin/feature-testing-guide" },
     ]
   },
 ];
-
-const tierBadge = (tier: string | null) => {
-  if (!tier) return null;
-  const styles = tier === 'pro' 
-    ? 'bg-blue-100 text-blue-700 border-blue-200' 
-    : 'bg-purple-100 text-purple-700 border-purple-200';
-  const label = tier === 'pro' ? 'PRO' : 'ENT';
-  return <span className={`ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded border ${styles}`}>{label}</span>;
-};
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -210,7 +200,7 @@ export default function AdminLayout({ children, currentPath }: AdminLayoutProps)
                           >
                             <item.icon className="h-5 w-5 shrink-0" />
                             {item.label}
-                            {isActive ? <ChevronRight className="h-4 w-4 ml-auto" /> : tierBadge(item.tier)}
+                            {isActive && <ChevronRight className="h-4 w-4 ml-auto" />}
                           </button>
                         </Link>
                       );
