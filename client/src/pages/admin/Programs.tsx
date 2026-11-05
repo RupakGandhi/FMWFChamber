@@ -17,8 +17,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { Link } from "wouter";
-import { Plus, FileEdit, FileText, Copy, ExternalLink, MoreHorizontal, Settings2, Mail, Link2, Trash2 } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { Plus, FileEdit, FileText, Copy, ExternalLink, MoreHorizontal, Settings2, Mail, Link2, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import AdminLayout from "./AdminLayout";
 import {
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export default function AdminPrograms() {
+  const [, setLocation] = useLocation();
   const [createOpen, setCreateOpen] = useState(false);
   const [newProgram, setNewProgram] = useState({
     name: '',
@@ -38,7 +39,20 @@ export default function AdminPrograms() {
     year: new Date().getFullYear(),
   });
 
+  const [copyTarget, setCopyTarget] = useState<{ id: number; sourceName: string } | null>(null);
+  const [copyForm, setCopyForm] = useState({ name: '', slug: '', year: new Date().getFullYear() });
+
   const { data: programs, isLoading, refetch } = trpc.programs.list.useQuery();
+  const copyMutation = trpc.programs.copy.useMutation({
+    onSuccess: () => {
+      toast.success('Copy created as a Draft');
+      setCopyTarget(null);
+      refetch();
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    }
+  });
   const createMutation = trpc.programs.create.useMutation({
     onSuccess: () => {
       toast.success('Program created successfully');
@@ -201,6 +215,59 @@ export default function AdminPrograms() {
           </Dialog>
         </div>
 
+        <Dialog open={copyTarget !== null} onOpenChange={(open) => !open && setCopyTarget(null)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Copy as New Program</DialogTitle>
+              <DialogDescription>
+                Creates an independent Draft from {copyTarget?.sourceName}, with the same form, scoring and email setup.
+                Applications, reviewer assignments and results are not copied, and the original is not changed.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="copy-name">Program Name</Label>
+                <Input
+                  id="copy-name"
+                  value={copyForm.name}
+                  maxLength={255}
+                  onChange={(e) => setCopyForm({ ...copyForm, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="copy-slug">Public Link</Label>
+                <Input
+                  id="copy-slug"
+                  value={copyForm.slug}
+                  maxLength={100}
+                  onChange={(e) => setCopyForm({ ...copyForm, slug: e.target.value })}
+                />
+                <p className="text-sm text-muted-foreground font-mono break-all">
+                  {window.location.origin}/apply/{copyForm.slug}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="copy-year">Program Year</Label>
+                <Input
+                  id="copy-year"
+                  type="number"
+                  value={copyForm.year}
+                  onChange={(e) => setCopyForm({ ...copyForm, year: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={() => setCopyTarget(null)}>Cancel</Button>
+              <Button
+                disabled={copyMutation.isPending}
+                onClick={() => copyTarget && copyMutation.mutate({ id: copyTarget.id, ...copyForm })}
+              >
+                {copyMutation.isPending ? 'Copying...' : 'Create Draft Copy'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {isLoading ? (
           <div className="space-y-4">
             {[1, 2, 3].map(i => (
@@ -238,7 +305,7 @@ export default function AdminPrograms() {
                         {program.programType === 'registration' && 'Event Registration'}
                         {' • '}{program.year}
                         {program.description && (
-                          <span className="hidden sm:inline"> • {program.description}</span>
+                          <span className="hidden sm:line-clamp-3 whitespace-pre-line">{program.description}</span>
                         )}
                       </CardDescription>
                     </div>
@@ -249,8 +316,12 @@ export default function AdminPrograms() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => setLocation(`/admin/programs/${program.id}?tab=details`)}>
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Edit Name & Description
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => {
-                          updateMutation.mutate({ 
+                          updateMutation.mutate({
                             id: program.id, 
                             status: program.status === 'open' ? 'closed' : 'open' 
                           });
@@ -262,6 +333,13 @@ export default function AdminPrograms() {
                         }}>
                           <Copy className="h-4 w-4 mr-2" />
                           Duplicate for {program.year + 1}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => {
+                          setCopyTarget({ id: program.id, sourceName: program.name });
+                          setCopyForm({ name: `${program.name} (Copy)`, slug: `${program.slug}-copy`, year: program.year });
+                        }}>
+                          <Copy className="h-4 w-4 mr-2" />
+                          Copy as New Program
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => {
                           updateMutation.mutate({ id: program.id, status: 'archived' });

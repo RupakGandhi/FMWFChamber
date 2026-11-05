@@ -10,7 +10,7 @@ import {
 import {
   LayoutDashboard, ClipboardList, Users, LogOut,
   Menu, X, Home, ChevronRight, BarChart3, Settings, Archive, Flag,
-  Mail, Wrench, HelpCircle, Compass, UserRoundCog, FileCheck
+  Mail, Wrench, HelpCircle, Compass, UserRoundCog, FileCheck, Award
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -40,6 +40,7 @@ const menuSections: MenuSection[] = [
       { icon: Users, label: "Reviewers", path: "/admin/reviewers" },
       { icon: BarChart3, label: "Reviewer Progress", path: "/admin/reviewer-progress" },
       { icon: Flag, label: "Applicant Flags", path: "/admin/flags" },
+      { icon: Award, label: "Award Restrictions", path: "/admin/award-restrictions" },
       { icon: Archive, label: "Archives", path: "/admin/archives" },
     ]
   },

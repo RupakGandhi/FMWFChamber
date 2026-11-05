@@ -12,6 +12,8 @@ import { useParams, useLocation } from "wouter";
 import { ClipboardList, ArrowRight, ArrowLeft, Send, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { FormField } from "../../../../drizzle/schema";
+import RichInstructions from "@/components/RichInstructions";
+import { allowedFileTypes, isUploadedFile, MAX_UPLOAD_MB, visibleFields, withoutHiddenAnswers } from "@shared/formLogic";
 
 export default function PublicApply() {
   const { slug } = useParams<{ slug: string }>();
@@ -21,6 +23,7 @@ export default function PublicApply() {
   
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState<Record<string, unknown>>({});
+  const [uploadingFields, setUploadingFields] = useState<string[]>([]);
   const [applicantInfo, setApplicantInfo] = useState({
     name: '',
     email: '',
@@ -76,7 +79,7 @@ export default function PublicApply() {
   // First step is always contact info
   steps.push({ title: 'Contact Information', fields: [] });
   
-  fields.forEach(field => {
+  visibleFields(fields, formData).forEach(field => {
     if (field.type === 'heading') {
       if (currentSection.fields.length > 0) {
         steps.push(currentSection);
@@ -95,6 +98,32 @@ export default function PublicApply() {
   if (steps.length === 1) {
     steps.push({ title: 'Application Details', fields: [] });
   }
+
+  // Changing an earlier answer can remove steps.
+  if (currentStep > steps.length - 1) setCurrentStep(steps.length - 1);
+
+  const uploadFile = async (field: FormField, file: File) => {
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      toast.error(`Files must be ${MAX_UPLOAD_MB} MB or smaller.`);
+      return;
+    }
+    setUploadingFields(prev => [...prev, field.id]);
+    try {
+      const query = new URLSearchParams({ slug: slug || '', fieldId: field.id, name: file.name });
+      const response = await fetch(`/api/public/uploads?${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      handleFieldChange(field.id, result);
+    } catch (uploadError) {
+      toast.error(uploadError instanceof Error && uploadError.message ? uploadError.message : 'The file could not be uploaded.');
+    } finally {
+      setUploadingFields(prev => prev.filter(id => id !== field.id));
+    }
+  };
 
   const handleFieldChange = (fieldId: string, value: unknown) => {
     setFormData(prev => ({ ...prev, [fieldId]: value }));
@@ -267,12 +296,53 @@ export default function PublicApply() {
           </div>
         );
 
+      case 'instructions':
+        return (
+          <div key={field.id} className="space-y-2 rounded-md bg-muted/40 p-4">
+            {field.label && <h3 className="font-semibold">{field.label}</h3>}
+            <RichInstructions text={field.content ?? ''} />
+          </div>
+        );
+
+      case 'file':
+        return (
+          <div key={field.id} className="space-y-2">
+            <Label htmlFor={field.id}>
+              {field.label}
+              {field.required && <span className="text-destructive ml-1">*</span>}
+            </Label>
+            <Input
+              id={field.id}
+              type="file"
+              accept={allowedFileTypes(field).map(type => `.${type}`).join(',')}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadFile(field, file);
+              }}
+            />
+            {uploadingFields.includes(field.id) && (
+              <p className="text-sm text-muted-foreground flex items-center gap-2" role="status">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Uploading...
+              </p>
+            )}
+            {isUploadedFile(value) && <p className="text-sm">Uploaded: {value.name}</p>}
+            {field.helpText && (
+              <p className="text-sm text-muted-foreground">{field.helpText}</p>
+            )}
+          </div>
+        );
+
       default:
         return null;
     }
   };
 
   const handleNext = () => {
+    if (uploadingFields.length > 0) {
+      toast.error('Please wait for your file to finish uploading.');
+      return;
+    }
     if (currentStep === 0) {
       // Validate contact info
       if (!applicantInfo.name || !applicantInfo.email) {
@@ -288,6 +358,10 @@ export default function PublicApply() {
   };
 
   const handleSubmit = () => {
+    if (uploadingFields.length > 0) {
+      toast.error('Please wait for your file to finish uploading.');
+      return;
+    }
     // Validate required fields
     const currentFields = steps[currentStep]?.fields || [];
     for (const field of currentFields) {
@@ -299,7 +373,7 @@ export default function PublicApply() {
 
     submitMutation.mutate({
       programSlug: slug || '',
-      formData,
+      formData: withoutHiddenAnswers(fields, formData),
       applicantName: applicantInfo.name,
       applicantEmail: applicantInfo.email,
       applicantPhone: applicantInfo.phone || undefined,
@@ -329,7 +403,7 @@ export default function PublicApply() {
         <div className="mb-6 sm:mb-8 text-center">
           <h2 className="text-xl sm:text-3xl font-bold mb-2">{program.name}</h2>
           {program.description && (
-            <p className="text-sm sm:text-base text-muted-foreground">{program.description}</p>
+            <p className="text-sm sm:text-base text-muted-foreground whitespace-pre-line text-left sm:text-center">{program.description}</p>
           )}
         </div>
 

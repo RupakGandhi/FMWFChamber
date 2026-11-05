@@ -9,6 +9,9 @@ import { FileSpreadsheet, Table, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import AdminLayout from "./AdminLayout";
 import ProgramSubNav from "@/components/ProgramSubNav";
+import { formatAnswer } from "@shared/awardEligibility";
+import { allCriteria, questionCommentEntries } from "@shared/reviewRubric";
+import { isUploadedFile } from "@shared/formLogic";
 
 type ExportRow = Record<string, string | number>;
 
@@ -65,13 +68,17 @@ export default function AdminExport() {
   ), [program]);
 
   const scoreCriteria = useMemo(() => new Map(
-    (program?.scoringConfig?.criteria || []).map(criterion => [criterion.id, criterion.name]),
+    allCriteria(program?.scoringConfig).map(criterion => [criterion.id, criterion.name]),
   ), [program]);
 
   const rows = useMemo<ExportRow[]>(() => applications.map((application: any) => {
     const row: ExportRow = {
       'Application #': application.applicationNumber,
       'Rank': application.rank || '',
+      ...(program?.programType === 'awards' ? {
+        'Eligibility': application.eligibilityStatus,
+        'Eligibility Reason': application.eligibilityReason || '',
+      } : {}),
       'Status': application.status,
       'Applicant Name': application.applicantName || '',
       'Email': application.applicantEmail || '',
@@ -99,13 +106,19 @@ export default function AdminExport() {
           .filter((score: any) => score.comments)
           .map((score: any) => `${score.reviewerName}: ${score.comments}`)
           .join(' | ');
+        row['Reviewer Comment-Only Answers'] = applicationScores
+          .flatMap((score: any) => questionCommentEntries(program?.scoringConfig, score)
+            .map(item => `${score.reviewerName} — ${item.label}: ${item.comment}`))
+          .join(' | ');
       }
     }
 
     if (includeFormData) {
       const formData = (application.formData || {}) as Record<string, unknown>;
       formKeys.forEach(key => {
-        row[`Form: ${fieldLabels.get(key) || key}`] = printable(formData[key]);
+        const fields = program?.formConfig?.fields;
+        const isChoice = !!fields?.find(field => field.id === key)?.options?.length;
+        row[`Form: ${fieldLabels.get(key) || key}`] = isChoice || isUploadedFile(formData[key]) ? formatAnswer(fields, key, formData[key]) : printable(formData[key]);
       });
     }
 
@@ -197,7 +210,7 @@ export default function AdminExport() {
               const comment = includeReviewerComments && criterion.comment ? ` — ${criterion.comment}` : '';
               return `${name}: ${criterion.score}${comment}`;
             }).join('; ');
-            return `<tr><td>${htmlCell(score.reviewerName)}</td><td>${htmlCell(score.totalScore)}</td><td>${htmlCell(criterionText)}</td>${includeReviewerComments ? `<td>${htmlCell(score.comments || '')}</td>` : ''}</tr>`;
+            return `<tr><td>${htmlCell(score.reviewerName)}</td><td>${htmlCell(score.totalScore)}</td><td>${htmlCell(criterionText)}</td>${includeReviewerComments ? `<td>${htmlCell([score.comments, ...questionCommentEntries(program?.scoringConfig, score).map(item => `${item.label}: ${item.comment}`)].filter(Boolean).join(' | '))}</td>` : ''}</tr>`;
           }).join('')}
         </tbody></table>
       </section>`;

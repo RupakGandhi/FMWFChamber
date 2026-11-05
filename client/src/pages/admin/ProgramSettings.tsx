@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ import AdminLayout from "./AdminLayout";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import ProgramLevelNav from "@/components/ProgramLevelNav";
+import { EditConflictDialog, StaffDraftNote, StaffDraftRestored, StaffDraftStatusLabel } from "@/components/StaffDraftBar";
+import { useStaffDraft } from "@/hooks/useStaffDraft";
 
 export default function ProgramSettings() {
   const params = useParams<{ id: string }>();
@@ -90,6 +92,8 @@ export default function ProgramSettings() {
   const [noShowTrackingEnabled, setNoShowTrackingEnabled] = useState(true);
   const [ticketCapacityThreshold, setTicketCapacityThreshold] = useState(0);
   const [applicationDeadline, setApplicationDeadline] = useState('');
+  const [nomineeFieldId, setNomineeFieldId] = useState('');
+  const [categoryFieldId, setCategoryFieldId] = useState('');
   
   // Reviewer management state
   const [addReviewerDialogOpen, setAddReviewerDialogOpen] = useState(false);
@@ -99,35 +103,127 @@ export default function ProgramSettings() {
   const [editReviewerName, setEditReviewerName] = useState("");
   const [editReviewerEmail, setEditReviewerEmail] = useState("");
   
-  // Load settings from program
+  const [baseline, setBaseline] = useState('');
+  const [baseRevision, setBaseRevision] = useState(0);
+  const [conflict, setConflict] = useState(false);
+  const reloadAfterSave = useRef(false);
+
+  const settingsDraft = {
+    reviewerRemindersEnabled,
+    reminderDaysThreshold,
+    statusUpdateEnabled,
+    reviewDeadline,
+    reviewDeadlineEnabled,
+    scoreEditingEnabled,
+    mandatoryCommentsEnabled,
+    blindReviewEnabled,
+    minScoreForComment,
+    programCapacity,
+    waitlistEnabled,
+    autoWaitlistPromotionEnabled,
+    checkinEnabled,
+    tshirtTrackingEnabled,
+    participantFormEnabled,
+    noShowTrackingEnabled,
+    ticketCapacityThreshold,
+    applicationDeadline,
+    nomineeFieldId,
+    categoryFieldId,
+  };
+  type SettingsDraft = typeof settingsDraft;
+
+  const applySettings = (values: SettingsDraft) => {
+    setReviewerRemindersEnabled(values.reviewerRemindersEnabled);
+    setReminderDaysThreshold(values.reminderDaysThreshold);
+    setStatusUpdateEnabled(values.statusUpdateEnabled);
+    setReviewDeadline(values.reviewDeadline);
+    setReviewDeadlineEnabled(values.reviewDeadlineEnabled);
+    setScoreEditingEnabled(values.scoreEditingEnabled);
+    setMandatoryCommentsEnabled(values.mandatoryCommentsEnabled);
+    setBlindReviewEnabled(values.blindReviewEnabled);
+    setMinScoreForComment(values.minScoreForComment);
+    setProgramCapacity(values.programCapacity);
+    setWaitlistEnabled(values.waitlistEnabled);
+    setAutoWaitlistPromotionEnabled(values.autoWaitlistPromotionEnabled);
+    setCheckinEnabled(values.checkinEnabled);
+    setTshirtTrackingEnabled(values.tshirtTrackingEnabled);
+    setParticipantFormEnabled(values.participantFormEnabled);
+    setNoShowTrackingEnabled(values.noShowTrackingEnabled);
+    setTicketCapacityThreshold(values.ticketCapacityThreshold);
+    setApplicationDeadline(values.applicationDeadline);
+    setNomineeFieldId(values.nomineeFieldId);
+    setCategoryFieldId(values.categoryFieldId);
+  };
+
+  const hasUnsavedChanges = baseline !== '' && baseline !== JSON.stringify(settingsDraft);
+  const unsavedRef = useRef(false);
+  unsavedRef.current = hasUnsavedChanges;
+
+  const loadSettings = (source: NonNullable<typeof program>) => {
+    const settings = source.settings || {};
+    const loaded: SettingsDraft = {
+      reviewerRemindersEnabled: settings.reviewerRemindersEnabled || false,
+      reminderDaysThreshold: settings.reminderDaysThreshold || 3,
+      statusUpdateEnabled: source.emailConfig?.statusUpdateEnabled || false,
+      reviewDeadline: settings.reviewDeadline || '',
+      reviewDeadlineEnabled: settings.reviewDeadlineEnabled || false,
+      scoreEditingEnabled: settings.scoreEditingEnabled || false,
+      mandatoryCommentsEnabled: settings.mandatoryCommentsEnabled || false,
+      blindReviewEnabled: settings.blindReviewEnabled || false,
+      minScoreForComment: settings.minScoreForComment || 3,
+      programCapacity: settings.maxCapacity || 0,
+      waitlistEnabled: settings.waitlistEnabled || false,
+      autoWaitlistPromotionEnabled: settings.autoWaitlistPromotionEnabled || false,
+      checkinEnabled: settings.checkInEnabled || false,
+      tshirtTrackingEnabled: settings.tshirtTrackingEnabled || false,
+      participantFormEnabled: settings.participantFormEnabled !== false,
+      noShowTrackingEnabled: settings.noShowTrackingEnabled !== false,
+      ticketCapacityThreshold: settings.ticketCapacityThreshold || 0,
+      applicationDeadline: settings.applicationDeadline || '',
+      nomineeFieldId: settings.nomineeFieldId || '',
+      categoryFieldId: settings.categoryFieldId || '',
+    };
+    applySettings(loaded);
+    setBaseRevision(source.revision);
+    setBaseline(JSON.stringify(loaded));
+  };
+
+  // Load settings from program. A background refresh must never replace work in progress.
   useEffect(() => {
-    if (program) {
-      const settings = program.settings || {};
-      setReviewerRemindersEnabled(settings.reviewerRemindersEnabled || false);
-      setReminderDaysThreshold(settings.reminderDaysThreshold || 3);
-      setStatusUpdateEnabled(program.emailConfig?.statusUpdateEnabled || false);
-      setReviewDeadline(settings.reviewDeadline || '');
-      setReviewDeadlineEnabled(settings.reviewDeadlineEnabled || false);
-      setScoreEditingEnabled(settings.scoreEditingEnabled || false);
-      setMandatoryCommentsEnabled(settings.mandatoryCommentsEnabled || false);
-      setBlindReviewEnabled(settings.blindReviewEnabled || false);
-      setMinScoreForComment(settings.minScoreForComment || 3);
-      setProgramCapacity(settings.maxCapacity || 0);
-      setWaitlistEnabled(settings.waitlistEnabled || false);
-      setAutoWaitlistPromotionEnabled(settings.autoWaitlistPromotionEnabled || false);
-      setCheckinEnabled(settings.checkInEnabled || false);
-      setTshirtTrackingEnabled(settings.tshirtTrackingEnabled || false);
-      setParticipantFormEnabled(settings.participantFormEnabled !== false);
-      setNoShowTrackingEnabled(settings.noShowTrackingEnabled !== false);
-      setTicketCapacityThreshold(settings.ticketCapacityThreshold || 0);
-      setApplicationDeadline(settings.applicationDeadline || '');
-    }
+    if (!program) return;
+    if (unsavedRef.current && !reloadAfterSave.current) return;
+    reloadAfterSave.current = false;
+    loadSettings(program);
   }, [program]);
+
+  const draft = useStaffDraft<SettingsDraft>({
+    programId,
+    scope: 'program-settings',
+    value: settingsDraft,
+    dirty: hasUnsavedChanges,
+    ready: baseline !== '',
+    baseRevision,
+    onRestore: (payload, revision) => {
+      applySettings(payload);
+      setBaseRevision(revision);
+    },
+    onDiscard: () => {
+      if (program) loadSettings(program);
+    },
+  });
+
+  useEffect(() => {
+    if (draft.isProtected) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [draft.isProtected]);
   
-  const handleSaveSettings = async () => {
+  const handleSaveSettings = async (expectedRevision = baseRevision) => {
     try {
       await updateSettings.mutateAsync({
         programId,
+        expectedRevision,
         settings: {
           reviewerRemindersEnabled,
           reminderDaysThreshold,
@@ -147,6 +243,8 @@ export default function ProgramSettings() {
           noShowTrackingEnabled,
           ticketCapacityThreshold: ticketCapacityThreshold || undefined,
           applicationDeadline: applicationDeadline || undefined,
+          nomineeFieldId: nomineeFieldId || undefined,
+          categoryFieldId: categoryFieldId || undefined,
         },
       });
       
@@ -156,10 +254,24 @@ export default function ProgramSettings() {
       });
       
       toast.success("Settings saved successfully");
+      reloadAfterSave.current = true;
       refetch();
     } catch (error) {
-      toast.error("Failed to save settings");
+      if ((error as { data?: { code?: string } }).data?.code === 'CONFLICT') setConflict(true);
+      else toast.error("Failed to save settings");
     }
+  };
+
+  const replaceWithMine = async () => {
+    setConflict(false);
+    const latest = await refetch();
+    if (latest.data) handleSaveSettings(latest.data.revision);
+  };
+
+  const loadLatest = async () => {
+    setConflict(false);
+    const latest = await refetch();
+    if (latest.data) loadSettings(latest.data);
   };
   
   const handleSendReminders = async () => {
@@ -239,14 +351,33 @@ export default function ProgramSettings() {
             <h1 className="text-2xl font-bold">{program.name} - Settings</h1>
             <p className="text-muted-foreground">Configure program features and notifications</p>
           </div>
-          <Button onClick={handleSaveSettings} disabled={updateSettings.isPending} size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
-            <Save className="h-4 w-4 mr-2" />
-            {updateSettings.isPending ? "Saving..." : "Save All Settings"}
-          </Button>
+          <div className="flex items-center gap-3">
+            <StaffDraftStatusLabel status={draft.status} savedAt={draft.savedAt} />
+            <Button onClick={() => handleSaveSettings()} disabled={updateSettings.isPending} size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
+              <Save className="h-4 w-4 mr-2" />
+              {updateSettings.isPending ? "Saving..." : "Save All Settings"}
+            </Button>
+          </div>
         </div>
 
         {/* Program Level Navigation */}
         <ProgramLevelNav programId={programId} activeTab="settings" />
+
+        <StaffDraftNote saveLabel="Save All Settings" />
+        {draft.restoredFrom && (
+          <StaffDraftRestored
+            updatedAt={draft.restoredFrom.updatedAt}
+            outdated={draft.restoredFrom.outdated}
+            saveLabel="Save All Settings"
+            onDiscard={draft.discard}
+          />
+        )}
+        <EditConflictDialog
+          open={conflict}
+          onKeepEditing={() => setConflict(false)}
+          onOverwrite={replaceWithMine}
+          onLoadLatest={loadLatest}
+        />
         
         {/* Reviewer Management Section - Prominent at top */}
         <Card className="border-2 border-primary/20">
@@ -693,9 +824,41 @@ export default function ProgramSettings() {
 
         </div>
 
+        {program.programType === 'awards' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Award Restriction Matching</CardTitle>
+              <CardDescription>
+                Which form questions name the nominee and the award category. Used by Award Restrictions and Top Nominees.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              {([
+                ['Nominee Question', nomineeFieldId, setNomineeFieldId, 'nominee_business'],
+                ['Award Category Question', categoryFieldId, setCategoryFieldId, 'award_category'],
+              ] as const).map(([label, selected, select, fallback]) => (
+                <div key={label} className="space-y-2">
+                  <Label htmlFor={fallback}>{label}</Label>
+                  <select
+                    id={fallback}
+                    className="w-full h-10 px-3 rounded-md border bg-background"
+                    value={selected}
+                    onChange={(e) => select(e.target.value)}
+                  >
+                    <option value="">Default ({fallback})</option>
+                    {(program.formConfig?.fields ?? []).filter(field => field.type !== 'heading').map(field => (
+                      <option key={field.id} value={field.id}>{field.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Save Button - Bottom */}
         <div className="flex justify-end pt-4 border-t">
-          <Button onClick={handleSaveSettings} disabled={updateSettings.isPending} size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
+          <Button onClick={() => handleSaveSettings()} disabled={updateSettings.isPending} size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg">
             <Save className="h-4 w-4 mr-2" />
             {updateSettings.isPending ? "Saving..." : "Save All Settings"}
           </Button>

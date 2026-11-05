@@ -432,6 +432,9 @@ export default function AdminApplications() {
                         <td className="p-3">
                           <div>
                             <p className="font-medium text-sm">{app.applicantName || 'N/A'}</p>
+                            {app.eligibilityStatus === 'ineligible' && (
+                              <p className="text-xs font-medium text-destructive">Confirmed ineligible</p>
+                            )}
                             <p className="text-xs text-muted-foreground hidden sm:block">{app.applicantEmail}</p>
                           </div>
                         </td>

@@ -9,6 +9,8 @@ import { useParams, useLocation, Link } from "wouter";
 import { ArrowLeft, Send, Loader2, Star, FileText, CheckCircle, Clock, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { ScoringCriteria } from "../../../../drizzle/schema";
+import AnswerValue from "@/components/AnswerValue";
+import { minScoreOf, ratedCriteria, resolveCriteria } from "@shared/reviewRubric";
 
 export default function ReviewerApplication() {
   const { token, applicationId } = useParams<{ token: string; applicationId: string }>();
@@ -63,8 +65,8 @@ export default function ReviewerApplication() {
   }
 
   const { application, program, existingScore } = data;
-  const scoringConfig = program?.scoringConfig;
-  const criteria = scoringConfig?.criteria || [];
+  const criteria = resolveCriteria(program, application);
+  const rated = ratedCriteria(criteria);
   
   // Check review settings - only enforce when toggles are enabled
   const settings = program?.settings as any;
@@ -84,6 +86,9 @@ export default function ReviewerApplication() {
     (existingScore.criteriaScores as Array<{ criteriaId: string; score: number; comment?: string }>)?.forEach(cs => {
       existingScores[cs.criteriaId] = cs.score;
       if (cs.comment) existingComments[cs.criteriaId] = cs.comment;
+    });
+    existingScore.questionComments?.forEach(item => {
+      existingComments[item.criteriaId] = item.comment;
     });
     if (Object.keys(existingScores).length > 0) {
       setScores(existingScores);
@@ -105,7 +110,7 @@ export default function ReviewerApplication() {
   };
 
   const calculateMaxTotal = () => {
-    return criteria.reduce((sum: number, c: ScoringCriteria) => sum + c.maxScore, 0);
+    return rated.reduce((sum: number, c: ScoringCriteria) => sum + c.maxScore, 0);
   };
 
   const handleSubmit = () => {
@@ -118,7 +123,7 @@ export default function ReviewerApplication() {
       return;
     }
     // Validate all criteria have scores
-    for (const criterion of criteria) {
+    for (const criterion of rated) {
       if (scores[criterion.id] === undefined) {
         toast.error(`Please score: ${criterion.name}`);
         return;
@@ -128,11 +133,15 @@ export default function ReviewerApplication() {
         toast.error(`A comment is required for "${criterion.name}" when scoring below ${minScoreForComment}`);
         return;
       }
+      if (criterion.commentRequired && !comments[criterion.id]?.trim()) {
+        toast.error(`A comment is required for "${criterion.name}"`);
+        return;
+      }
     }
 
-    const criteriaScores = criteria.map((c: ScoringCriteria) => ({
+    const criteriaScores = rated.map((c: ScoringCriteria) => ({
       criteriaId: c.id,
-      score: scores[c.id] || 0,
+      score: scores[c.id] ?? minScoreOf(c),
       comment: comments[c.id],
     }));
 
@@ -140,6 +149,9 @@ export default function ReviewerApplication() {
       token: token || '',
       applicationId: appId,
       criteriaScores,
+      questionComments: criteria
+        .filter((c: ScoringCriteria) => c.commentOnly && comments[c.id]?.trim())
+        .map((c: ScoringCriteria) => ({ criteriaId: c.id, comment: comments[c.id] })),
       comments: overallComments,
     });
   };
@@ -203,7 +215,7 @@ export default function ReviewerApplication() {
                         {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                       </h4>
                       <p className="whitespace-pre-wrap">
-                        {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
+                        <AnswerValue fields={program?.formConfig?.fields} fieldId={key} value={value} reviewerToken={token} />
                       </p>
                     </div>
                   ))}
@@ -277,7 +289,20 @@ export default function ReviewerApplication() {
                     No scoring criteria configured for this program.
                   </p>
                 ) : (
-                  criteria.map((criterion: ScoringCriteria) => (
+                  criteria.map((criterion: ScoringCriteria) => criterion.commentOnly ? (
+                    <div key={criterion.id} className="space-y-2">
+                      <Label className="text-base font-semibold">{criterion.name}</Label>
+                      {criterion.description && (
+                        <p className="text-sm text-muted-foreground">{criterion.description}</p>
+                      )}
+                      <Textarea
+                        placeholder="Comment (optional, not scored)"
+                        value={comments[criterion.id] || ''}
+                        onChange={(e) => handleCommentChange(criterion.id, e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+                  ) : (
                     <div key={criterion.id} className="space-y-4">
                       <div className="flex justify-between items-start">
                         <div>
@@ -287,19 +312,20 @@ export default function ReviewerApplication() {
                           )}
                         </div>
                         <div className="text-right">
-                          <span className="text-2xl font-bold">{scores[criterion.id] || 0}</span>
+                          <span className="text-2xl font-bold">{scores[criterion.id] ?? minScoreOf(criterion)}</span>
                           <span className="text-muted-foreground">/{criterion.maxScore}</span>
                         </div>
                       </div>
                       <Slider
-                        value={[scores[criterion.id] || 0]}
+                        value={[scores[criterion.id] ?? minScoreOf(criterion)]}
+                        min={minScoreOf(criterion)}
                         max={criterion.maxScore}
                         step={1}
                         onValueChange={(value) => handleScoreChange(criterion.id, value[0])}
                         className="w-full"
                       />
                       <Textarea
-                        placeholder={`Comments for ${criterion.name} (optional)`}
+                        placeholder={criterion.commentRequired ? 'Comment (required)' : 'Comment (optional)'}
                         value={comments[criterion.id] || ''}
                         onChange={(e) => handleCommentChange(criterion.id, e.target.value)}
                         rows={2}

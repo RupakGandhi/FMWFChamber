@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,8 @@ import { trpc } from "@/lib/trpc";
 import { useParams, Link } from "wouter";
 import { Mail, Save, Loader2, Info, Eye, RotateCcw } from "lucide-react";
 import ProgramLevelNav from "@/components/ProgramLevelNav";
+import { EditConflictDialog, StaffDraftNote, StaffDraftRestored, StaffDraftStatusLabel } from "@/components/StaffDraftBar";
+import { useStaffDraft } from "@/hooks/useStaffDraft";
 import { toast } from "sonner";
 import AdminLayout from "./AdminLayout";
 import {
@@ -111,7 +113,7 @@ export default function EmailTemplates() {
   const { id: programId } = useParams<{ id: string }>();
   const id = parseInt(programId || "0");
   
-  const { data: program, isLoading } = trpc.programs.getById.useQuery({ id });
+  const { data: program, isLoading, refetch } = trpc.programs.getById.useQuery({ id });
   
   const [templates, setTemplates] = useState({
     confirmationEnabled: true,
@@ -129,38 +131,82 @@ export default function EmailTemplates() {
   
   const [previewTemplate, setPreviewTemplate] = useState<{ subject: string; body: string } | null>(null);
   
-  // Load existing email config when program data is available
+  const [baseline, setBaseline] = useState('');
+  const [baseRevision, setBaseRevision] = useState(0);
+  const [conflict, setConflict] = useState(false);
+  const reloadAfterSave = useRef(false);
+  const hasUnsavedChanges = baseline !== '' && baseline !== JSON.stringify(templates);
+  const unsavedRef = useRef(false);
+  unsavedRef.current = hasUnsavedChanges;
+
+  const loadTemplates = (source: NonNullable<typeof program>) => {
+    const loaded = {
+        ...templates,
+        confirmationEnabled: source.emailConfig?.confirmationEnabled ?? true,
+        confirmationSubject: source.emailConfig?.confirmationSubject || defaultTemplates.confirmation.subject,
+        confirmationBody: source.emailConfig?.confirmationBody || defaultTemplates.confirmation.body,
+        reviewerNotificationEnabled: source.emailConfig?.reviewerNotificationEnabled ?? true,
+        reviewerAssignmentSubject: source.emailConfig?.reviewerAssignmentSubject || defaultTemplates.reviewerAssignment.subject,
+        reviewerAssignmentBody: source.emailConfig?.reviewerAssignmentBody || defaultTemplates.reviewerAssignment.body,
+        statusUpdateEnabled: source.emailConfig?.statusUpdateEnabled ?? false,
+        statusUpdateSubject: source.emailConfig?.statusUpdateSubject || defaultTemplates.statusUpdate.subject,
+        statusUpdateBody: source.emailConfig?.statusUpdateBody || defaultTemplates.statusUpdate.body,
+        reviewerReminderSubject: source.emailConfig?.reviewerReminderSubject || defaultTemplates.reviewerReminder.subject,
+        reviewerReminderBody: source.emailConfig?.reviewerReminderBody || defaultTemplates.reviewerReminder.body,
+    };
+    setTemplates(loaded);
+    setBaseRevision(source.revision);
+    setBaseline(JSON.stringify(loaded));
+  };
+
+  // Load existing email config when program data is available. A background refresh
+  // must never replace work in progress.
   useEffect(() => {
-    if (program?.emailConfig) {
-      setTemplates(prev => ({
-        ...prev,
-        confirmationEnabled: program.emailConfig?.confirmationEnabled ?? true,
-        confirmationSubject: program.emailConfig?.confirmationSubject || defaultTemplates.confirmation.subject,
-        confirmationBody: program.emailConfig?.confirmationBody || defaultTemplates.confirmation.body,
-        reviewerNotificationEnabled: program.emailConfig?.reviewerNotificationEnabled ?? true,
-        reviewerAssignmentSubject: program.emailConfig?.reviewerAssignmentSubject || defaultTemplates.reviewerAssignment.subject,
-        reviewerAssignmentBody: program.emailConfig?.reviewerAssignmentBody || defaultTemplates.reviewerAssignment.body,
-        statusUpdateEnabled: program.emailConfig?.statusUpdateEnabled ?? false,
-        statusUpdateSubject: program.emailConfig?.statusUpdateSubject || defaultTemplates.statusUpdate.subject,
-        statusUpdateBody: program.emailConfig?.statusUpdateBody || defaultTemplates.statusUpdate.body,
-        reviewerReminderSubject: program.emailConfig?.reviewerReminderSubject || defaultTemplates.reviewerReminder.subject,
-        reviewerReminderBody: program.emailConfig?.reviewerReminderBody || defaultTemplates.reviewerReminder.body,
-      }));
-    }
+    if (!program) return;
+    if (unsavedRef.current && !reloadAfterSave.current) return;
+    reloadAfterSave.current = false;
+    loadTemplates(program);
   }, [program]);
+
+  const draft = useStaffDraft<typeof templates>({
+    programId: id,
+    scope: 'email-templates',
+    value: templates,
+    dirty: hasUnsavedChanges,
+    ready: baseline !== '',
+    baseRevision,
+    onRestore: (payload, revision) => {
+      setTemplates(payload);
+      setBaseRevision(revision);
+    },
+    onDiscard: () => {
+      if (program) loadTemplates(program);
+    },
+  });
+
+  useEffect(() => {
+    if (draft.isProtected) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [draft.isProtected]);
   
   const updateMutation = trpc.programs.update.useMutation({
     onSuccess: () => {
       toast.success("Email templates saved successfully!");
+      reloadAfterSave.current = true;
+      refetch();
     },
     onError: (error) => {
-      toast.error(error.message);
+      if (error.data?.code === 'CONFLICT') setConflict(true);
+      else toast.error(error.message);
     }
   });
   
-  const handleSave = () => {
+  const handleSave = (expectedRevision = baseRevision) => {
     updateMutation.mutate({
       id,
+      expectedRevision,
       emailConfig: {
         confirmationEnabled: templates.confirmationEnabled,
         confirmationSubject: templates.confirmationSubject,
@@ -177,6 +223,18 @@ export default function EmailTemplates() {
     });
   };
   
+  const replaceWithMine = async () => {
+    setConflict(false);
+    const latest = await refetch();
+    if (latest.data) handleSave(latest.data.revision);
+  };
+
+  const loadLatest = async () => {
+    setConflict(false);
+    const latest = await refetch();
+    if (latest.data) loadTemplates(latest.data);
+  };
+
   const resetToDefault = (templateType: string) => {
     switch (templateType) {
       case 'confirmation':
@@ -269,15 +327,34 @@ export default function EmailTemplates() {
             </h1>
             <p className="text-muted-foreground">{program.name}</p>
           </div>
-          <Button onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4 mr-2" />
-            )}
-            Save Templates
-          </Button>
+          <div className="flex items-center gap-3">
+            <StaffDraftStatusLabel status={draft.status} savedAt={draft.savedAt} />
+            <Button onClick={() => handleSave()} disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              Save Templates
+            </Button>
+          </div>
         </div>
+
+        <StaffDraftNote saveLabel="Save Templates" />
+        {draft.restoredFrom && (
+          <StaffDraftRestored
+            updatedAt={draft.restoredFrom.updatedAt}
+            outdated={draft.restoredFrom.outdated}
+            saveLabel="Save Templates"
+            onDiscard={draft.discard}
+          />
+        )}
+        <EditConflictDialog
+          open={conflict}
+          onKeepEditing={() => setConflict(false)}
+          onOverwrite={replaceWithMine}
+          onLoadLatest={loadLatest}
+        />
 
         {/* Program Level Navigation */}
         <ProgramLevelNav programId={id} activeTab="email-templates" />

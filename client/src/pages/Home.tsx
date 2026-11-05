@@ -225,7 +225,7 @@ export default function Home() {
                         <DeadlineCountdown deadline={program.applicationDeadline} />
                       </div>
                       <CardTitle className="text-[#1e3a5f] text-lg sm:text-xl">{program.name}</CardTitle>
-                      <CardDescription className="text-sm sm:text-base">
+                      <CardDescription className="text-sm sm:text-base whitespace-pre-line line-clamp-4">
                         {program.description}
                       </CardDescription>
                     </CardHeader>

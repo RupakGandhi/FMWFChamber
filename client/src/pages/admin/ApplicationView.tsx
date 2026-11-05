@@ -9,6 +9,9 @@ import { ArrowLeft, User, Mail, Phone, Building, Calendar, Star, UserPlus, Check
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import AdminLayout from "./AdminLayout";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Award } from "lucide-react";
+import AnswerValue from "@/components/AnswerValue";
 
 export default function AdminApplicationView() {
   const { programId, id } = useParams<{ programId: string; id: string }>();
@@ -25,6 +28,11 @@ export default function AdminApplicationView() {
   const { data: reviewers } = trpc.reviewers.list.useQuery();
   const { data: assignments, refetch: refetchAssignments } = trpc.assignments.getByApplication.useQuery({ applicationId: appId });
   const { data: participantFormData } = trpc.participantForms.getByApplication.useQuery({ applicationId: appId });
+  const { data: eligibilityEntries } = trpc.awards.eligibilityCheck.useQuery(
+    { programId: pid },
+    { enabled: program?.programType === 'awards' },
+  );
+  const eligibility = eligibilityEntries?.find(entry => entry.id === appId);
 
   const updateStatusMutation = trpc.applications.updateStatus.useMutation({
     onSuccess: () => {
@@ -545,6 +553,26 @@ export default function AdminApplicationView() {
           </Card>
         </div>
 
+        {eligibility && (eligibility.matches.length > 0 || eligibility.eligibilityStatus !== 'not_reviewed') && (
+          <Alert>
+            <Award className="h-4 w-4" />
+            <AlertTitle>
+              {eligibility.eligibilityStatus === 'ineligible' ? 'Confirmed ineligible: excluded from final selection'
+                : eligibility.eligibilityStatus === 'eligible' ? 'Reviewed and cleared as eligible by staff'
+                : 'Possible award restriction: needs staff review'}
+            </AlertTitle>
+            <AlertDescription>
+              {eligibility.eligibilityReason && <p>{eligibility.eligibilityReason}</p>}
+              {eligibility.matches.map(win => (
+                <p key={win.id}>
+                  {win.recipientName} won {win.category} in {win.awardYear}; eligible again in {win.eligibleAgainYear}.
+                </p>
+              ))}
+              <Link href={`/admin/award-restrictions?program=${pid}`} className="underline">Review in Award Restrictions</Link>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Application Responses */}
         <Card>
           <CardHeader>
@@ -558,7 +586,7 @@ export default function AdminApplicationView() {
                     {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                   </h4>
                   <p className="whitespace-pre-wrap">
-                    {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
+                    <AnswerValue fields={program?.formConfig?.fields} fieldId={key} value={value} />
                   </p>
                 </div>
               ))}

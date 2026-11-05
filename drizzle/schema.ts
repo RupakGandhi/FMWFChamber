@@ -1,4 +1,8 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, json, decimal } from "drizzle-orm/mysql-core";
+import { customType, int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, json, decimal, uniqueIndex } from "drizzle-orm/mysql-core";
+
+const mediumBlob = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => "mediumblob",
+});
 
 // Core user table for admin authentication
 export const users = mysqlTable("users", {
@@ -39,6 +43,8 @@ export const programs = mysqlTable("programs", {
   scoringConfig: json("scoringConfig").$type<ScoringConfig>(),
   emailConfig: json("emailConfig").$type<EmailConfig>(),
   settings: json("settings").$type<ProgramSettings>(),
+  // Incremented on every staff content save so concurrent edits are detected.
+  revision: int("revision").default(0).notNull(),
   createdBy: int("createdBy"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -64,6 +70,11 @@ export const applications = mysqlTable("applications", {
   totalScore: decimal("totalScore", { precision: 8, scale: 2 }),
   reviewCount: int("reviewCount").default(0),
   rank: int("rank"),
+  // Staff decision on award eligibility; independent of the workflow status above.
+  eligibilityStatus: mysqlEnum("eligibilityStatus", ["not_reviewed", "eligible", "ineligible"]).default("not_reviewed").notNull(),
+  eligibilityReason: text("eligibilityReason"),
+  eligibilityReviewedBy: int("eligibilityReviewedBy"),
+  eligibilityReviewedAt: timestamp("eligibilityReviewedAt"),
   submittedAt: timestamp("submittedAt").defaultNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -108,6 +119,9 @@ export const scores = mysqlTable("scores", {
   reviewerId: int("reviewerId").notNull(),
   programId: int("programId").notNull(),
   criteriaScores: json("criteriaScores").$type<CriteriaScore[]>(),
+  // Answers to comment-only questions. Kept apart from criteriaScores so they can
+  // never enter a total, average or ranking.
+  questionComments: json("questionComments").$type<QuestionComment[]>(),
   totalScore: decimal("totalScore", { precision: 8, scale: 2 }),
   comments: text("comments"),
   submittedAt: timestamp("submittedAt").defaultNow().notNull(),
@@ -138,7 +152,7 @@ export type InsertEmailLog = typeof emailLogs.$inferInsert;
 // Type definitions for JSON fields
 export interface FormField {
   id: string;
-  type: "text" | "textarea" | "email" | "phone" | "select" | "radio" | "checkbox" | "number" | "date" | "file" | "section" | "heading";
+  type: "text" | "textarea" | "email" | "phone" | "select" | "radio" | "checkbox" | "number" | "date" | "file" | "section" | "heading" | "instructions";
   label: string;
   placeholder?: string;
   required?: boolean;
@@ -147,6 +161,8 @@ export interface FormField {
   validation?: { min?: number; max?: number; pattern?: string };
   helpText?: string;
   section?: string;
+  content?: string; // Text shown by an "instructions" block
+  fileTypes?: string[]; // Extensions accepted by a "file" question
 }
 
 export interface FormConfig {
@@ -161,11 +177,22 @@ export interface ScoringCriteria {
   name: string;
   description?: string;
   maxScore: number;
+  minScore?: number; // Lowest allowed score; 0 when not set
+  commentRequired?: boolean; // Reviewers must write a comment for this question
+  commentOnly?: boolean; // Optional written answer with no rating and no effect on scores
   weight?: number;
+}
+
+export interface CategoryRubric {
+  id: string;
+  name: string;
+  categoryValues: string[]; // Stored category answers reviewed on this form
+  criteria: ScoringCriteria[];
 }
 
 export interface ScoringConfig {
   criteria: ScoringCriteria[];
+  categoryRubrics?: CategoryRubric[];
   maxTotalScore?: number;
   passingScore?: number;
   reviewersPerApplication?: number;
@@ -233,10 +260,18 @@ export interface ProgramSettings {
   ticketCapacityThreshold?: number; // Notify admin when total tickets reach this number
   ticketThresholdNotificationSent?: boolean; // Track if notification was already sent
   ticketFieldId?: string; // Which form field contains the ticket count (default: 'ticket_count')
+  // Awards: which form fields hold the nominee and the award category
+  nomineeFieldId?: string; // default: 'nominee_business'
+  categoryFieldId?: string; // default: 'award_category'
   // Phase 2: Workflow stages
   workflowStages?: { id: string; name: string; color?: string }[];
   // Application deadline (ISO date string, displayed on homepage)
   applicationDeadline?: string;
+}
+
+export interface QuestionComment {
+  criteriaId: string;
+  comment: string;
 }
 
 export interface CriteriaScore {
@@ -371,6 +406,56 @@ export const applicantFlags = mysqlTable("applicant_flags", {
 
 export type ApplicantFlag = typeof applicantFlags.$inferSelect;
 export type InsertApplicantFlag = typeof applicantFlags.$inferInsert;
+
+// Past award winners. Separate from applicant flags: a win restricts one nominee in one
+// award category for a limited time, and never blocks a nominator's email.
+export const awardWins = mysqlTable("award_wins", {
+  id: int("id").autoincrement().primaryKey(),
+  recipientName: varchar("recipientName", { length: 255 }).notNull(),
+  recipientType: mysqlEnum("recipientType", ["business", "individual"]).notNull(),
+  category: varchar("category", { length: 255 }).notNull(),
+  awardYear: int("awardYear").notNull(),
+  restrictionYears: int("restrictionYears").default(5).notNull(),
+  notes: text("notes"),
+  createdBy: int("createdBy"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AwardWin = typeof awardWins.$inferSelect;
+export type InsertAwardWin = typeof awardWins.$inferInsert;
+
+// Applicant uploads. Kept in the database so they are covered by database backups and
+// survive redeploys. A file is unclaimed until its application is submitted.
+export const applicationFiles = mysqlTable("application_files", {
+  id: int("id").autoincrement().primaryKey(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  programId: int("programId").notNull(),
+  applicationId: int("applicationId"),
+  fieldId: varchar("fieldId", { length: 100 }).notNull(),
+  originalName: varchar("originalName", { length: 255 }).notNull(),
+  fileSize: int("fileSize").notNull(),
+  data: mediumBlob("data").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ApplicationFile = typeof applicationFiles.$inferSelect;
+
+// Autosaved staff edits. A draft never changes the live program until Save Changes.
+export const staffEditDrafts = mysqlTable("staff_edit_drafts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  programId: int("programId").notNull(),
+  scope: varchar("scope", { length: 32 }).notNull(),
+  payload: json("payload").$type<unknown>(),
+  baseRevision: int("baseRevision").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  draftOwner: uniqueIndex("staff_edit_drafts_owner_unique").on(table.userId, table.programId, table.scope),
+}));
+
+export type StaffEditDraft = typeof staffEditDrafts.$inferSelect;
 
 // Waitlist management
 export const waitlist = mysqlTable("waitlist", {

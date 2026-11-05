@@ -1,4 +1,6 @@
 import { useParams } from "wouter";
+import { formatAnswer } from "@shared/awardEligibility";
+import { allCriteria, questionCommentEntries } from "@shared/reviewRubric";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,8 +49,7 @@ export default function ApplicationPdf() {
   
   // Get criteria label from scoring config
   const getCriteriaLabel = (criteriaId: string): string => {
-    if (!scoringConfig?.criteria) return criteriaId;
-    const criteria = scoringConfig.criteria.find(c => c.id === criteriaId);
+    const criteria = allCriteria(scoringConfig).find(c => c.id === criteriaId);
     return criteria?.name || criteriaId;
   };
   
@@ -146,7 +147,7 @@ export default function ApplicationPdf() {
                 <div key={fieldId} className="border-b pb-3 last:border-0">
                   <p className="font-medium text-gray-700 text-sm">{getFieldLabel(fieldId)}</p>
                   <p className="mt-1 text-gray-900 whitespace-pre-wrap">
-                    {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value || 'N/A')}
+                    {formatAnswer(formConfig?.fields, fieldId, value) || 'N/A'}
                   </p>
                 </div>
               ))}
@@ -191,6 +192,12 @@ export default function ApplicationPdf() {
                         <p className="mt-1 text-gray-700 italic">{score.comments}</p>
                       </div>
                     )}
+                    {questionCommentEntries(scoringConfig, score).map(item => (
+                      <div key={item.label} className="mt-2 text-sm">
+                        <span className="font-medium text-gray-600">{item.label}:</span>
+                        <p className="mt-1 text-gray-700 italic">{item.comment}</p>
+                      </div>
+                    ))}
                   </div>
                 ))}
                 

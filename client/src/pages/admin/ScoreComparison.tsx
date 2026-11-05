@@ -1,3 +1,4 @@
+import { questionCommentEntries, ratedCriteria, resolveCriteria } from "@shared/reviewRubric";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,11 @@ interface ScoringCriteria {
   weight?: number;
 }
 
+const escapeHtml = (value: string) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
 export default function ScoreComparison() {
   const { programId, id } = useParams<{ programId: string; id: string }>();
   const pid = parseInt(programId || '0');
@@ -45,8 +51,7 @@ export default function ScoreComparison() {
     setExporting('csv');
     
     try {
-      const scoringConfig = program.scoringConfig as { criteria: ScoringCriteria[] } | null;
-      const criteria = scoringConfig?.criteria || [];
+      const criteria = ratedCriteria(resolveCriteria(program, application));
       
       // Build CSV content
       const rows: string[][] = [];
@@ -60,7 +65,8 @@ export default function ScoreComparison() {
         'Total Score',
         'Submitted Date',
         ...criteria.map(c => c.name),
-        'General Comments'
+        'General Comments',
+        'Comment-Only Answers'
       ];
       rows.push(headerRow);
       
@@ -80,7 +86,9 @@ export default function ScoreComparison() {
             const cs = criteriaScores.find(cs => cs.criteriaId === c.id);
             return cs ? cs.score.toString() : '';
           }),
-          (score.comments || '').replace(/"/g, '""').replace(/\n/g, ' ')
+          (score.comments || '').replace(/"/g, '""').replace(/\n/g, ' '),
+          questionCommentEntries(program.scoringConfig, score)
+            .map(item => `${item.label}: ${item.comment}`).join(' | ').replace(/"/g, '""').replace(/\n/g, ' ')
         ];
         rows.push(row);
       });
@@ -144,8 +152,7 @@ export default function ScoreComparison() {
     setExporting('pdf');
     
     try {
-      const scoringConfig = program.scoringConfig as { criteria: ScoringCriteria[] } | null;
-      const criteria = scoringConfig?.criteria || [];
+      const criteria = ratedCriteria(resolveCriteria(program, application));
       
       // Calculate statistics
       const totalStats = {
@@ -270,6 +277,7 @@ export default function ScoreComparison() {
         <div class="comment-box">
           <h4>${reviewer?.name || `Reviewer ${score.reviewerId}`} (Score: ${score.totalScore})</h4>
           <p>${score.comments || 'No general comments provided'}</p>
+          ${questionCommentEntries(program.scoringConfig, score).map(item => `<p><strong>${escapeHtml(item.label)}:</strong> ${escapeHtml(item.comment)}</p>`).join('')}
         </div>
       `;
     }).join('')}
@@ -328,8 +336,7 @@ export default function ScoreComparison() {
     );
   }
 
-  const scoringConfig = program.scoringConfig as { criteria: ScoringCriteria[] } | null;
-  const criteria = scoringConfig?.criteria || [];
+  const criteria = ratedCriteria(resolveCriteria(program, application));
 
   // Calculate statistics for each criterion
   const getCriteriaStats = (criteriaId: string) => {
@@ -647,6 +654,12 @@ export default function ScoreComparison() {
                         ) : (
                           <p className="text-sm text-muted-foreground italic">No general comments provided</p>
                         )}
+                        {questionCommentEntries(program.scoringConfig, score).map(item => (
+                          <div key={item.label} className="mt-3 text-sm">
+                            <p className="font-medium">{item.label}</p>
+                            <p className="whitespace-pre-wrap text-muted-foreground">{item.comment}</p>
+                          </div>
+                        ))}
                       </CardContent>
                     </Card>
                   );

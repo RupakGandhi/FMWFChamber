@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, sql, inArray, gte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray, gte, isNull, lt, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql, { TypeCastField, TypeCastNext } from "mysql2";
 import {
@@ -15,7 +15,10 @@ import {
   checkins, InsertCheckin,
   applicantFlags, InsertApplicantFlag,
   waitlist, InsertWaitlist,
-  participantForms, InsertParticipantForm
+  participantForms, InsertParticipantForm,
+  awardWins, InsertAwardWin,
+  staffEditDrafts,
+  applicationFiles
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { nanoid } from 'nanoid';
@@ -28,7 +31,7 @@ import { nanoid } from 'nanoid';
 // configuration and application data hydrate into objects on every host.
 const JSON_COLUMN_NAMES = new Set([
   "formConfig", "scoringConfig", "emailConfig", "settings",
-  "formData", "criteriaScores", "calendarSettings", "value", "data", "attendees",
+  "formData", "criteriaScores", "questionComments", "calendarSettings", "value", "data", "attendees", "payload",
 ]);
 
 function parseJsonColumn(raw: string | null): unknown {
@@ -67,10 +70,11 @@ function hydrateJsonRows<T extends Record<string, unknown>>(rows: T[], fields: r
 
 const PROGRAM_JSON_FIELDS = ["formConfig", "scoringConfig", "emailConfig", "settings"] as const;
 const APPLICATION_JSON_FIELDS = ["formData"] as const;
-const SCORE_JSON_FIELDS = ["criteriaScores"] as const;
+const SCORE_JSON_FIELDS = ["criteriaScores", "questionComments"] as const;
 const ARCHIVE_JSON_FIELDS = ["data"] as const;
 const PARTICIPANT_FORM_JSON_FIELDS = ["attendees"] as const;
 const USER_JSON_FIELDS = ["calendarSettings"] as const;
+const STAFF_DRAFT_JSON_FIELDS = ["payload"] as const;
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -276,6 +280,22 @@ export async function updateProgram(id: number, data: Partial<InsertProgram>) {
   await db.update(programs).set(data).where(eq(programs.id, id));
 }
 
+/**
+ * Save staff edits and advance the program's revision. When expectedRevision is given the
+ * write only happens if nobody else saved first; returns false in that case.
+ */
+export async function saveProgramEdits(id: number, data: Partial<InsertProgram>, expectedRevision?: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const target = expectedRevision === undefined
+    ? eq(programs.id, id)
+    : and(eq(programs.id, id), eq(programs.revision, expectedRevision));
+  const [result] = await db.update(programs)
+    .set({ ...data, revision: sql`${programs.revision} + 1` })
+    .where(target);
+  return (result as unknown as { affectedRows: number }).affectedRows > 0;
+}
+
 export async function getPrograms(status?: string) {
   const db = await getDb();
   if (!db) return [];
@@ -327,6 +347,30 @@ export async function duplicateProgram(id: number, newYear: number) {
     settings: original.settings,
   };
   return createProgram(newProgram);
+}
+
+/** An independent copy of a program's setup. Applications, scores and links are not copied. */
+export async function copyProgram(id: number, copy: { name: string; slug: string; year: number; createdBy?: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const original = await getProgramById(id);
+  if (!original) throw new Error("Program not found");
+  const clone = <T>(value: T): T => (value === null || value === undefined ? value : JSON.parse(JSON.stringify(value)));
+  const settings = clone(original.settings);
+  if (settings) settings.ticketThresholdNotificationSent = false;
+  return createProgram({
+    name: copy.name,
+    slug: copy.slug,
+    description: original.description,
+    programType: original.programType,
+    status: 'draft',
+    year: copy.year,
+    formConfig: clone(original.formConfig),
+    scoringConfig: clone(original.scoringConfig),
+    emailConfig: clone(original.emailConfig),
+    settings,
+    createdBy: copy.createdBy,
+  });
 }
 
 // Application queries
@@ -396,8 +440,10 @@ export async function updateApplicationScores(applicationId: number) {
 export async function rankApplicationsByProgram(programId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  await db.update(applications).set({ rank: null })
+    .where(and(eq(applications.programId, programId), eq(applications.eligibilityStatus, 'ineligible')));
   const apps = await db.select().from(applications)
-    .where(eq(applications.programId, programId))
+    .where(and(eq(applications.programId, programId), ne(applications.eligibilityStatus, 'ineligible')))
     .orderBy(desc(applications.averageScore));
   for (let i = 0; i < apps.length; i++) {
     await db.update(applications).set({ rank: i + 1 }).where(eq(applications.id, apps[i].id));
@@ -715,6 +761,7 @@ export async function getScoresForExport(programId: number) {
     reviewerId: scores.reviewerId,
     reviewerName: reviewers.name,
     criteriaScores: scores.criteriaScores,
+    questionComments: scores.questionComments,
     totalScore: scores.totalScore,
     comments: scores.comments,
     submittedAt: scores.submittedAt
@@ -725,6 +772,136 @@ export async function getScoresForExport(programId: number) {
     .where(eq(applications.programId, programId))
     .orderBy(asc(applications.rank));
   return hydrateJsonRows(rows, SCORE_JSON_FIELDS);
+}
+
+// Reviewer top-five data: submitted scores and assignments for one program
+export async function getLeaderboardData(programId: number) {
+  const db = await getDb();
+  if (!db) return { applications: [], scores: [], assignments: [] };
+  const [applicationRows, scoreRows, assignmentRows] = await Promise.all([
+    db.select().from(applications).where(eq(applications.programId, programId)),
+    db.select({
+      applicationId: scores.applicationId,
+      reviewerId: scores.reviewerId,
+      reviewerName: reviewers.name,
+      totalScore: scores.totalScore,
+    }).from(scores)
+      .innerJoin(reviewers, eq(scores.reviewerId, reviewers.id))
+      .where(eq(scores.programId, programId)),
+    db.select({
+      applicationId: reviewerAssignments.applicationId,
+      reviewerId: reviewerAssignments.reviewerId,
+      reviewerName: reviewers.name,
+    }).from(reviewerAssignments)
+      .innerJoin(reviewers, eq(reviewerAssignments.reviewerId, reviewers.id))
+      .where(eq(reviewerAssignments.programId, programId)),
+  ]);
+  return {
+    applications: hydrateJsonRows(applicationRows, APPLICATION_JSON_FIELDS),
+    scores: scoreRows.map(row => ({ ...row, totalScore: parseFloat(row.totalScore || '0') })),
+    assignments: assignmentRows,
+  };
+}
+
+// Award history (separate from applicant flags)
+export async function getAwardWins() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(awardWins).orderBy(desc(awardWins.awardYear), asc(awardWins.recipientName));
+}
+
+export async function createAwardWin(data: InsertAwardWin) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(awardWins).values(data);
+  return result.insertId;
+}
+
+export async function updateAwardWin(id: number, data: Partial<InsertAwardWin>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(awardWins).set(data).where(eq(awardWins.id, id));
+}
+
+export async function deleteAwardWin(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(awardWins).where(eq(awardWins.id, id));
+}
+
+// Applicant uploads
+const ABANDONED_FILE_MS = 24 * 60 * 60 * 1000;
+
+export async function createApplicationFile(file: typeof applicationFiles.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(applicationFiles).values(file);
+}
+
+export async function getApplicationFile(token: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(applicationFiles).where(eq(applicationFiles.token, token)).limit(1);
+  return rows[0];
+}
+
+/** An upload waiting to be attached to a new application on this program and question. */
+export async function getUnclaimedFile(token: string, programId: number, fieldId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select({
+    token: applicationFiles.token,
+    originalName: applicationFiles.originalName,
+    fileSize: applicationFiles.fileSize,
+  }).from(applicationFiles).where(and(
+    eq(applicationFiles.token, token),
+    eq(applicationFiles.programId, programId),
+    eq(applicationFiles.fieldId, fieldId),
+    isNull(applicationFiles.applicationId),
+  )).limit(1);
+  return rows[0];
+}
+
+export async function claimApplicationFiles(tokens: string[], applicationId: number) {
+  if (tokens.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(applicationFiles).set({ applicationId }).where(inArray(applicationFiles.token, tokens));
+}
+
+/** Removes uploads from forms that were never submitted. */
+export async function deleteAbandonedFiles() {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(applicationFiles).where(and(
+    isNull(applicationFiles.applicationId),
+    lt(applicationFiles.createdAt, new Date(Date.now() - ABANDONED_FILE_MS)),
+  ));
+}
+
+// Autosaved staff edits
+export async function getStaffDraft(userId: number, programId: number, scope: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(staffEditDrafts)
+    .where(and(eq(staffEditDrafts.userId, userId), eq(staffEditDrafts.programId, programId), eq(staffEditDrafts.scope, scope)))
+    .limit(1);
+  return rows[0] ? hydrateJsonFields(rows[0], STAFF_DRAFT_JSON_FIELDS) : null;
+}
+
+export async function saveStaffDraft(draft: { userId: number; programId: number; scope: string; payload: unknown; baseRevision: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(staffEditDrafts).values(draft).onDuplicateKeyUpdate({
+    set: { payload: draft.payload, baseRevision: draft.baseRevision, updatedAt: new Date() },
+  });
+}
+
+export async function deleteStaffDraft(userId: number, programId: number, scope: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(staffEditDrafts)
+    .where(and(eq(staffEditDrafts.userId, userId), eq(staffEditDrafts.programId, programId), eq(staffEditDrafts.scope, scope)));
 }
 
 // Stats queries
@@ -891,6 +1068,7 @@ export async function deleteApplication(id: number) {
   // Delete related records first
   await db.delete(scores).where(eq(scores.applicationId, id));
   await db.delete(reviewerAssignments).where(eq(reviewerAssignments.applicationId, id));
+  await db.delete(applicationFiles).where(eq(applicationFiles.applicationId, id));
   await db.delete(applications).where(eq(applications.id, id));
 }
 
@@ -915,6 +1093,7 @@ export async function resetProgramApplications(programId: number, archiveYear?: 
   for (const app of apps) {
     await db.delete(scores).where(eq(scores.applicationId, app.id));
     await db.delete(reviewerAssignments).where(eq(reviewerAssignments.applicationId, app.id));
+    await db.delete(applicationFiles).where(eq(applicationFiles.applicationId, app.id));
   }
   
   // Delete all applications for this program
@@ -954,6 +1133,8 @@ export async function deleteProgramPermanently(programId: number) {
   await db.delete(reviewerReminders).where(eq(reviewerReminders.programId, programId));
   await db.delete(emailLogs).where(eq(emailLogs.programId, programId));
   await db.delete(archives).where(eq(archives.programId, programId));
+  await db.delete(staffEditDrafts).where(eq(staffEditDrafts.programId, programId));
+  await db.delete(applicationFiles).where(eq(applicationFiles.programId, programId));
   await db.delete(applications).where(eq(applications.programId, programId));
   await db.delete(programs).where(eq(programs.id, programId));
 

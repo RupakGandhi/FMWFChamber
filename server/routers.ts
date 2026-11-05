@@ -8,6 +8,10 @@ import * as db from "./db";
 import { notifyApplicationSubmitted, notifyReviewerAssigned, notifyReviewerUnassigned, notifyStatusChanged, generateReviewerAssignmentEmail, generateApplicationConfirmationEmail, generateStatusUpdateEmail, defaultTemplates, replaceTemplateVariables } from "./emailNotifications";
 import { getSmtpConfig, saveSmtpConfig, testSmtpConnection } from "./smtpService";
 import { FormConfig, ScoringConfig, EmailConfig, ProgramSettings, CriteriaScore, SmtpConfig } from "../drizzle/schema";
+import { describeEntry, DEFAULT_RESTRICTION_YEARS, eligibleAgainYear, findRestrictions } from "../shared/awardEligibility";
+import { isDisplayOnly, isUploadedFile, visibleFields, withoutHiddenAnswers } from "../shared/formLogic";
+import { buildLeaderboards } from "../shared/leaderboard";
+import { cleanQuestionComments, minScoreOf, ratedCriteria, resolveCriteria } from "../shared/reviewRubric";
 import { generateTemporaryPassword, hashPassword, normalizeUsername, validatePasswordPolicy, validateUsername, verifyPassword } from "./nativeAuth";
 
 const DUMMY_NATIVE_PASSWORD_HASH = hashPassword("NativeAuthDummy!12345");
@@ -28,6 +32,17 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Admin access required' });
   }
   return next({ ctx });
+});
+
+const staffDraftScope = z.enum(['program-editor', 'program-settings', 'email-templates']);
+
+const awardWinInput = z.object({
+  recipientName: z.string().trim().min(1, 'Name is required').max(255),
+  recipientType: z.enum(['business', 'individual']),
+  category: z.string().trim().min(1, 'Category is required').max(255),
+  awardYear: z.number().int().min(1900).max(2100),
+  restrictionYears: z.number().int().min(1).max(50).default(DEFAULT_RESTRICTION_YEARS),
+  notes: z.string().trim().max(2000).nullable().optional(),
 });
 
 const publicBaseUrl = () => {
@@ -54,22 +69,13 @@ export function applicationDeadlineHasPassed(deadline: string | null | undefined
   return Boolean(deadline && today > deadline.slice(0, 10));
 }
 
-function fieldIsVisible(field: FormConfig['fields'][number], formData: Record<string, unknown>): boolean {
-  if (!field.conditionalOn) return true;
-  const actual = formData[field.conditionalOn.fieldId];
-  const expected = field.conditionalOn.value;
-  if (Array.isArray(expected)) return expected.includes(String(actual));
-  if (Array.isArray(actual)) return actual.map(String).includes(String(expected));
-  return String(actual ?? '') === String(expected);
-}
-
 function isBlank(value: unknown): boolean {
   return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
 }
 
 export function validateConfiguredForm(formConfig: FormConfig | null | undefined, formData: Record<string, unknown>) {
-  for (const field of formConfig?.fields || []) {
-    if (field.type === 'heading' || field.type === 'section' || !fieldIsVisible(field, formData)) continue;
+  for (const field of visibleFields(formConfig?.fields || [], formData)) {
+    if (isDisplayOnly(field)) continue;
     const value = formData[field.id];
     if (field.required && isBlank(value)) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: `Required field missing: ${field.label}` });
@@ -99,11 +105,43 @@ export function validateConfiguredForm(formConfig: FormConfig | null | undefined
   }
 }
 
+/** Eligibility decisions are staff-only; reviewers must never receive them. */
+export function withoutStaffFields<T extends object>(application: T) {
+  const { eligibilityStatus, eligibilityReason, eligibilityReviewedBy, eligibilityReviewedAt, ...visible } =
+    application as T & Partial<Record<'eligibilityStatus' | 'eligibilityReason' | 'eligibilityReviewedBy' | 'eligibilityReviewedAt', unknown>>;
+  return visible;
+}
+
+/** Replaces each file answer with the verified upload, and returns the tokens to claim. */
+async function attachUploads(program: NonNullable<Awaited<ReturnType<typeof db.getProgramById>>>, formData: Record<string, unknown>) {
+  const tokens: string[] = [];
+  for (const field of visibleFields(program.formConfig?.fields || [], formData)) {
+    if (field.type !== 'file' || isBlank(formData[field.id])) continue;
+    const value = formData[field.id];
+    const file = isUploadedFile(value) ? await db.getUnclaimedFile(value.fileToken, program.id, field.id) : undefined;
+    if (!file) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `Please upload ${field.label} again.` });
+    }
+    formData[field.id] = { fileToken: file.token, name: file.originalName, size: file.fileSize };
+    tokens.push(file.token);
+  }
+  return tokens;
+}
+
+async function saveProgramEditsOrThrow(id: number, data: Parameters<typeof db.saveProgramEdits>[1], expectedRevision?: number) {
+  if (await db.saveProgramEdits(id, data, expectedRevision)) return;
+  throw new TRPCError({
+    code: 'CONFLICT',
+    message: 'This program was saved by someone else, or in another tab, after you opened it.',
+  });
+}
+
 export function validateCriteriaScores(
   program: Awaited<ReturnType<typeof db.getProgramById>>,
   criteriaScores: CriteriaScore[],
+  application?: { formData?: Record<string, unknown> | null },
 ) {
-  const criteria = program?.scoringConfig?.criteria || [];
+  const criteria = ratedCriteria(resolveCriteria(program, application));
   const byId = new Map(criteria.map(item => [item.id, item]));
   if (criteria.length > 0 && criteriaScores.length !== criteria.length) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'A score is required for every scoring criterion.' });
@@ -113,11 +151,15 @@ export function validateCriteriaScores(
     if (!configured) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'An unknown scoring criterion was submitted.' });
     }
-    if (!Number.isFinite(score.score) || score.score < 0 || score.score > configured.maxScore) {
+    const minScore = minScoreOf(configured);
+    if (!Number.isFinite(score.score) || score.score < minScore || score.score > configured.maxScore) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
-        message: `${configured.name} must be between 0 and ${configured.maxScore}.`,
+        message: `${configured.name} must be between ${minScore} and ${configured.maxScore}.`,
       });
+    }
+    if (configured.commentRequired && !score.comment?.trim()) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `A comment is required for ${configured.name}.` });
     }
   }
 }
@@ -344,6 +386,139 @@ export const appRouter = router({
   }),
 
   // Program management (admin only)
+  // Autosaved staff edits. Private to the signed-in staff member and never applied to the
+  // live program; only Save Changes does that.
+  staffDrafts: router({
+    get: adminProcedure.input(z.object({
+      programId: z.number(),
+      scope: staffDraftScope,
+    })).query(async ({ input, ctx }) => {
+      return db.getStaffDraft(ctx.user.id, input.programId, input.scope);
+    }),
+
+    save: adminProcedure.input(z.object({
+      programId: z.number(),
+      scope: staffDraftScope,
+      payload: z.unknown(),
+      baseRevision: z.number(),
+    })).mutation(async ({ input, ctx }) => {
+      await db.saveStaffDraft({ ...input, userId: ctx.user.id });
+      return { savedAt: new Date() };
+    }),
+
+    discard: adminProcedure.input(z.object({
+      programId: z.number(),
+      scope: staffDraftScope,
+    })).mutation(async ({ input, ctx }) => {
+      await db.deleteStaffDraft(ctx.user.id, input.programId, input.scope);
+      return { success: true };
+    }),
+  }),
+
+  // Past winners and staff eligibility decisions. Kept apart from applicant flags, which
+  // are email-based and used for Military no-show restrictions.
+  awards: router({
+    listWins: adminProcedure.query(async () => {
+      const wins = await db.getAwardWins();
+      return wins.map(win => ({ ...win, eligibleAgainYear: eligibleAgainYear(win) }));
+    }),
+
+    createWin: adminProcedure.input(awardWinInput).mutation(async ({ input, ctx }) => {
+      const id = await db.createAwardWin({ ...input, createdBy: ctx.user.id });
+      return { id };
+    }),
+
+    updateWin: adminProcedure.input(awardWinInput.extend({ id: z.number() })).mutation(async ({ input }) => {
+      const { id, ...data } = input;
+      await db.updateAwardWin(id, data);
+      return { success: true };
+    }),
+
+    deleteWin: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+      await db.deleteAwardWin(input.id);
+      return { success: true };
+    }),
+
+    // Lists a program's entries with any past win that may restrict them. Nothing here
+    // rejects an entry or contacts anyone.
+    eligibilityCheck: adminProcedure.input(z.object({ programId: z.number() })).query(async ({ input }) => {
+      const program = await db.getProgramById(input.programId);
+      if (!program) throw new TRPCError({ code: 'NOT_FOUND', message: 'Program not found' });
+      const [wins, data] = await Promise.all([db.getAwardWins(), db.getLeaderboardData(input.programId)]);
+      return data.applications.map(application => {
+        const entry = describeEntry(program, application);
+        return {
+          id: application.id,
+          applicationNumber: application.applicationNumber,
+          displayName: entry.displayName,
+          nominee: entry.nominee,
+          categories: entry.categories,
+          eligibilityStatus: application.eligibilityStatus,
+          eligibilityReason: application.eligibilityReason,
+          eligibilityReviewedAt: application.eligibilityReviewedAt,
+          matches: findRestrictions(wins, entry, program.year).map(win => ({
+            ...win,
+            eligibleAgainYear: eligibleAgainYear(win),
+          })),
+        };
+      });
+    }),
+
+    setEligibility: adminProcedure.input(z.object({
+      applicationId: z.number(),
+      status: z.enum(['not_reviewed', 'eligible', 'ineligible']),
+      reason: z.string().trim().max(2000).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      if (input.status === 'ineligible' && !input.reason) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'A reason is required when marking an entry ineligible.' });
+      }
+      const entry = await db.getApplicationById(input.applicationId);
+      if (input.status === 'ineligible' && entry?.status === 'accepted') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'This entry is already accepted. Change its status before confirming it ineligible.',
+        });
+      }
+      const reviewed = input.status !== 'not_reviewed';
+      await db.updateApplication(input.applicationId, {
+        eligibilityStatus: input.status,
+        eligibilityReason: reviewed ? input.reason || null : null,
+        eligibilityReviewedBy: reviewed ? ctx.user.id : null,
+        eligibilityReviewedAt: reviewed ? new Date() : null,
+        ...(input.status === 'ineligible' ? { rank: null } : {}),
+      });
+      return { success: true };
+    }),
+  }),
+
+  leaderboards: router({
+    get: adminProcedure.input(z.object({
+      programId: z.number(),
+      category: z.string().optional(),
+    })).query(async ({ input }) => {
+      const program = await db.getProgramById(input.programId);
+      if (!program) throw new TRPCError({ code: 'NOT_FOUND', message: 'Program not found' });
+      const data = await db.getLeaderboardData(input.programId);
+      const applications = data.applications.map(application => {
+        const entry = describeEntry(program, application);
+        return {
+          id: application.id,
+          applicationNumber: application.applicationNumber,
+          displayName: entry.displayName,
+          categories: entry.categories,
+          ineligible: application.eligibilityStatus === 'ineligible',
+          ineligibleReason: application.eligibilityReason,
+        };
+      });
+      const { programId, ...options } = input;
+      return {
+        hasCategoryForms: !!program.scoringConfig?.categoryRubrics?.length,
+        categories: Array.from(new Set(applications.flatMap(application => application.categories))).sort(),
+        ...buildLeaderboards(applications, data.scores, data.assignments, options),
+      };
+    }),
+  }),
+
   programs: router({
     list: adminProcedure.input(z.object({ status: z.string().optional() }).optional()).query(async ({ input }) => {
       return db.getPrograms(input?.status);
@@ -394,7 +569,7 @@ export const appRouter = router({
     
     update: adminProcedure.input(z.object({
       id: z.number(),
-      name: z.string().optional(),
+      name: z.string().trim().min(1, 'Program name is required').max(255).optional(),
       description: z.string().optional(),
       status: z.enum(['draft', 'open', 'closed', 'archived']).optional(),
       startDate: z.date().nullable().optional(),
@@ -403,10 +578,32 @@ export const appRouter = router({
       scoringConfig: z.any().optional(),
       emailConfig: z.any().optional(),
       settings: z.any().optional(),
+      expectedRevision: z.number().optional(),
     })).mutation(async ({ input }) => {
-      const { id, ...data } = input;
-      await db.updateProgram(id, data);
+      const { id, expectedRevision, ...data } = input;
+      const editsContent = data.name !== undefined || data.description !== undefined || data.formConfig !== undefined
+        || data.scoringConfig !== undefined || data.emailConfig !== undefined || data.settings !== undefined;
+      if (!editsContent) {
+        await db.updateProgram(id, data);
+        return { success: true };
+      }
+      await saveProgramEditsOrThrow(id, data, expectedRevision);
       return { success: true };
+    }),
+
+    // Independent copy with its own name and public link, always starting as Draft
+    copy: adminProcedure.input(z.object({
+      id: z.number(),
+      name: z.string().trim().min(1, 'Program name is required').max(255),
+      slug: z.string().trim().min(1).max(100).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Use lowercase letters, numbers and hyphens only'),
+      year: z.number().int().min(2000).max(2100),
+    })).mutation(async ({ input, ctx }) => {
+      if (await db.getProgramBySlug(input.slug)) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'Another program already uses this public link.' });
+      }
+      const { id, ...copy } = input;
+      const newId = await db.copyProgram(id, { ...copy, createdBy: ctx.user.id });
+      return { id: newId };
     }),
     
     duplicate: adminProcedure.input(z.object({
@@ -467,7 +664,9 @@ export const appRouter = router({
       if (applicationDeadlineHasPassed(settings.applicationDeadline)) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'The application deadline has passed.' });
       }
-      validateConfiguredForm(program.formConfig, input.formData);
+      const formData = withoutHiddenAnswers(program.formConfig?.fields || [], input.formData);
+      validateConfiguredForm(program.formConfig, formData);
+      const fileTokens = await attachUploads(program, formData);
       if (settings.requireOrganization && !input.organizationName?.trim()) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Organization / Company is required.' });
       }
@@ -485,7 +684,7 @@ export const appRouter = router({
       }
       const result = await db.createApplication({
         programId: program.id,
-        formData: input.formData,
+        formData,
         applicantName: input.applicantName || undefined,
         applicantEmail: input.applicantEmail || undefined,
         applicantPhone: input.applicantPhone || undefined,
@@ -494,6 +693,7 @@ export const appRouter = router({
       if (shouldWaitlist) {
         await db.addToWaitlist(result.id, program.id);
       }
+      if (fileTokens.length > 0) await db.claimApplicationFiles(fileTokens, result.id);
       
       // Send notification for new application
       if (input.applicantName && input.applicantEmail) {
@@ -572,6 +772,12 @@ export const appRouter = router({
       if (!previous) throw new TRPCError({ code: 'NOT_FOUND', message: 'Application not found' });
       const program = await db.getProgramById(previous.programId);
       if (!program) throw new TRPCError({ code: 'NOT_FOUND', message: 'Program not found' });
+      if (input.status === 'accepted' && previous.eligibilityStatus === 'ineligible') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'This entry is confirmed ineligible. Clear that decision in Award Restrictions before accepting it.',
+        });
+      }
 
       if (input.status === 'waitlist') {
         await db.addToWaitlist(input.id, previous.programId);
@@ -1021,7 +1227,7 @@ export const appRouter = router({
           
           result.push({
             assignment,
-            application: blindApp,
+            application: withoutStaffFields(blindApp),
             program: { id: program.id, name: program.name, scoringConfig: program.scoringConfig },
             existingScore,
           });
@@ -1065,7 +1271,7 @@ export const appRouter = router({
       } : app;
       
       return {
-        application: blindApp,
+        application: withoutStaffFields(blindApp),
         program: program ? { 
           id: program.id, 
           name: program.name, 
@@ -1078,6 +1284,7 @@ export const appRouter = router({
             mandatoryCommentsEnabled: program.settings?.mandatoryCommentsEnabled || false,
             blindReviewEnabled: program.settings?.blindReviewEnabled || false,
             minScoreForComment: program.settings?.minScoreForComment || 0,
+            categoryFieldId: program.settings?.categoryFieldId,
           }
         } : null,
         existingScore,
@@ -1093,6 +1300,10 @@ export const appRouter = router({
         score: z.number(),
         comment: z.string().optional(),
       })),
+      questionComments: z.array(z.object({
+        criteriaId: z.string(),
+        comment: z.string().max(10000),
+      })).optional(),
       comments: z.string().optional(),
     })).mutation(async ({ input }) => {
       const reviewer = await db.getReviewerByToken(input.token);
@@ -1110,7 +1321,12 @@ export const appRouter = router({
       // Get program settings for toggle enforcement
       const program = await db.getProgramById(assignment.programId);
       const settings = program?.settings;
-      validateCriteriaScores(program, input.criteriaScores as CriteriaScore[]);
+      const scoredApplication = await db.getApplicationById(input.applicationId);
+      validateCriteriaScores(program, input.criteriaScores as CriteriaScore[], scoredApplication);
+      const questionComments = cleanQuestionComments(resolveCriteria(program, scoredApplication), input.questionComments);
+      if (!questionComments) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'An unknown comment question was submitted.' });
+      }
       
       // Enforce review deadline if enabled
       if (settings?.reviewDeadlineEnabled && settings?.reviewDeadline) {
@@ -1142,6 +1358,7 @@ export const appRouter = router({
         reviewerId: reviewer.id,
         programId: assignment.programId,
         criteriaScores: input.criteriaScores as CriteriaScore[],
+        questionComments,
         totalScore: String(totalScore),
         comments: input.comments,
       });
@@ -1204,7 +1421,7 @@ export const appRouter = router({
         ...(program.emailConfig || {}),
         statusUpdateEnabled: input.statusUpdateEnabled,
       };
-      await db.updateProgram(input.programId, { emailConfig });
+      await saveProgramEditsOrThrow(input.programId, { emailConfig });
       return { success: true };
     }),
     
@@ -1235,7 +1452,10 @@ export const appRouter = router({
         ticketThresholdNotificationSent: z.boolean().optional(),
         ticketFieldId: z.string().optional(),
         applicationDeadline: z.string().optional(),
+        nomineeFieldId: z.string().optional(),
+        categoryFieldId: z.string().optional(),
       }),
+      expectedRevision: z.number().optional(),
     })).mutation(async ({ input }) => {
       const program = await db.getProgramById(input.programId);
       if (!program) throw new TRPCError({ code: 'NOT_FOUND' });
@@ -1252,7 +1472,7 @@ export const appRouter = router({
         ...existingSettings,
         ...newSettings,
       };
-      await db.updateProgram(input.programId, { settings });
+      await saveProgramEditsOrThrow(input.programId, { settings }, input.expectedRevision);
       return { success: true };
     }),
     
@@ -1738,7 +1958,8 @@ export const appRouter = router({
       if (!program?.settings?.scoreEditingEnabled) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Score editing is not enabled for this program.' });
       }
-      validateCriteriaScores(program, input.criteriaScores as CriteriaScore[]);
+      const scoredApplication = await db.getApplicationById(score.applicationId);
+      validateCriteriaScores(program, input.criteriaScores as CriteriaScore[], scoredApplication);
       if (program.settings?.reviewDeadlineEnabled && program.settings?.reviewDeadline) {
         const deadline = new Date(program.settings.reviewDeadline);
         if (new Date() > deadline) {
