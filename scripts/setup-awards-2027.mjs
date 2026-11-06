@@ -264,7 +264,7 @@ const individualForm = {
     q("rising_impact", "Provide examples of how this leader demonstrates a meaningful impact within their organization, industry, or community", "textarea"),
     q("rising_watch", 'Why this individual is a "leader to watch" and how will their leadership influence continue to grow', "textarea"),
     q("rising_purpose", "What is the purpose or passion that shapes the nominee beyond their role", "textarea"),
-    optional("rising_letter", "Optional: Provide a letter of support for why this nominee is a distinguished leader", "file", LETTER_TYPES),
+    optional("rising_letter", "Optional: Provide a letter of support for why this nominee is a Rising Leader", "file", LETTER_TYPES),
 
     heading("h_distinguished", "Distinguished Leader Questions", when(DISTINGUISHED)),
     q("dist_style", "Describe the nominee's leadership style and how it has contributed to organizational, industry, or regional success", "textarea"),
@@ -433,7 +433,8 @@ try {
         JSON.stringify(program.formConfig),
         JSON.stringify({ ...program.scoringConfig, reviewersPerApplication }),
         JSON.stringify(parse(source.emailConfig) ?? {}),
-        JSON.stringify({ ...sourceSettings, categoryFieldId: "award_category", nomineeFieldId: program.nomineeFieldId }),
+        // Comments are optional on these forms, so the low-score comment rule does not carry over.
+        JSON.stringify({ ...sourceSettings, mandatoryCommentsEnabled: false, minScoreForComment: 0, categoryFieldId: "award_category", nomineeFieldId: program.nomineeFieldId }),
       ],
     );
   }
