@@ -12,6 +12,7 @@ import AdminLayout from "./AdminLayout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Award } from "lucide-react";
 import AnswerValue from "@/components/AnswerValue";
+import { answerEntries } from "@shared/formLogic";
 
 export default function AdminApplicationView() {
   const { programId, id } = useParams<{ programId: string; id: string }>();
@@ -580,10 +581,10 @@ export default function AdminApplicationView() {
           </CardHeader>
           <CardContent>
             <div className="space-y-6">
-              {Object.entries(formData).map(([key, value]) => (
+              {answerEntries(program?.formConfig?.fields, formData).map(({ id: key, label, value }) => (
                 <div key={key} className="border-b pb-4 last:border-0">
                   <h4 className="font-medium text-sm text-muted-foreground mb-2">
-                    {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    {label}
                   </h4>
                   <p className="whitespace-pre-wrap">
                     <AnswerValue fields={program?.formConfig?.fields} fieldId={key} value={value} />

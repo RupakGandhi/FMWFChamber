@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,7 +51,7 @@ export default function AdminTopNominees() {
     const header = ['List', 'Rank', 'Nominee', 'Application', 'Categories', 'Score', 'Reviews Submitted', 'Reviews Assigned'];
     const rows = [
       ...data.overall.entries.map(entry => [
-        'Overall (provisional)', entry.rank, entry.application.displayName, entry.application.applicationNumber,
+        'Overall', entry.rank, entry.application.displayName, entry.application.applicationNumber,
         entry.application.categories.join('; '), entry.average, entry.reviewCount, entry.assignedCount,
       ]),
       ...data.reviewers.flatMap(reviewer => reviewer.entries.map(entry => [
@@ -64,7 +63,7 @@ export default function AdminTopNominees() {
     const url = URL.createObjectURL(new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${program?.slug || 'program'}-top-nominees.csv`;
+    link.download = `${program?.slug || 'program'}-top-nominees${data.category ? `-${data.category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''}.csv`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 500);
   };
@@ -95,10 +94,9 @@ export default function AdminTopNominees() {
               <select
                 id="category-filter"
                 className="h-10 min-w-56 px-3 rounded-md border bg-background"
-                value={category}
+                value={data?.category ?? ''}
                 onChange={(e) => setCategory(e.target.value)}
               >
-                <option value="">All categories</option>
                 {data?.categories.map(item => <option key={item} value={item}>{item}</option>)}
               </select>
             </div>
@@ -109,29 +107,12 @@ export default function AdminTopNominees() {
           <div className="h-48 bg-muted animate-pulse rounded-lg" />
         ) : !data ? null : (
           <>
-            {data.hasCategoryForms && !category && (
-              <Alert>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Choose a category to compare fairly</AlertTitle>
-                <AlertDescription>
-                  Categories use different reviewer forms, so their totals are not comparable across categories.
-                </AlertDescription>
-              </Alert>
-            )}
-
             <Card>
               <CardHeader>
                 <CardTitle>Overall Top Five</CardTitle>
                 <CardDescription>Average of the reviewer totals submitted so far.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Provisional</AlertTitle>
-                  <AlertDescription>
-                    The Chamber has not yet approved how the overall list is calculated. Check the review counts before relying on this order.
-                  </AlertDescription>
-                </Alert>
                 {data.overall.entries.length === 0 ? (
                   <p className="text-muted-foreground text-center py-6">No submitted reviews yet.</p>
                 ) : (

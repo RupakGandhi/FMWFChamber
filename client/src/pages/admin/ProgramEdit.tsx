@@ -308,6 +308,9 @@ export default function AdminProgramEdit() {
               <Link2 className="h-4 w-4 mr-2" />
               Copy Link
             </Button>
+            <Button variant="outline" onClick={() => window.open(`/apply/${program.slug}`, '_blank')}>
+              Preview Form
+            </Button>
             <Button onClick={() => handleSave()} disabled={updateMutation.isPending}>
               <Save className="h-4 w-4 mr-2" />
               {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
@@ -821,6 +824,44 @@ export default function AdminProgramEdit() {
                     Add Criteria
                   </Button>
                 )}
+                <div className="pt-4 border-t space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={!!scoringConfig.ratingDropdown}
+                      onCheckedChange={(checked) => setScoringConfig({
+                        ...scoringConfig,
+                        ratingDropdown: checked ? { lowLabel: '', highLabel: '' } : undefined,
+                      })}
+                    />
+                    <Label>Reviewers Choose Ratings From a Dropdown</Label>
+                  </div>
+                  {scoringConfig.ratingDropdown && (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="rating-low">Lowest Rating Label</Label>
+                        <Input
+                          id="rating-low"
+                          value={scoringConfig.ratingDropdown.lowLabel ?? ''}
+                          onChange={(e) => setScoringConfig({
+                            ...scoringConfig,
+                            ratingDropdown: { ...scoringConfig.ratingDropdown, lowLabel: e.target.value },
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="rating-high">Highest Rating Label</Label>
+                        <Input
+                          id="rating-high"
+                          value={scoringConfig.ratingDropdown.highLabel ?? ''}
+                          onChange={(e) => setScoringConfig({
+                            ...scoringConfig,
+                            ratingDropdown: { ...scoringConfig.ratingDropdown, highLabel: e.target.value },
+                          })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div className="pt-4 border-t">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">

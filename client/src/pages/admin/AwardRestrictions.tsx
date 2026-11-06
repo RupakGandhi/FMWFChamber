@@ -13,13 +13,14 @@ import { Link, useSearch } from "wouter";
 import { Award, Edit2, Info, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import AdminLayout from "./AdminLayout";
-import { DEFAULT_CATEGORY_FIELD_ID, DEFAULT_RESTRICTION_YEARS } from "@shared/awardEligibility";
+import { categoryChoices as listCategoryChoices, DEFAULT_RESTRICTION_YEARS } from "@shared/awardEligibility";
 
 type WinForm = {
   id?: number;
   recipientName: string;
   recipientType: 'business' | 'individual';
   category: string;
+  categoryId: string;
   awardYear: number;
   restrictionYears: number;
   notes: string;
@@ -29,6 +30,7 @@ const emptyWin = (): WinForm => ({
   recipientName: '',
   recipientType: 'business',
   category: '',
+  categoryId: '',
   awardYear: new Date().getFullYear(),
   restrictionYears: DEFAULT_RESTRICTION_YEARS,
   notes: '',
@@ -78,20 +80,13 @@ export default function AdminAwardRestrictions() {
   const [winForm, setWinForm] = useState<WinForm | null>(null);
   const [decision, setDecision] = useState<{ applicationId: number; name: string; reason: string } | null>(null);
 
-  // Offer the exact category labels used on award forms, since matching compares them.
-  const categoryChoices = useMemo(() => {
-    const labels = awardPrograms.flatMap(program => {
-      const fieldId = program.settings?.categoryFieldId || DEFAULT_CATEGORY_FIELD_ID;
-      const field = program.formConfig?.fields?.find(item => item.id === fieldId);
-      return (field?.options ?? []).map(option => (typeof option === 'string' ? option : option.label));
-    });
-    return Array.from(new Set(labels)).sort();
-  }, [awardPrograms]);
+  // Winners are linked to a form category by its stable value, so renaming it keeps the match.
+  const categoryChoices = useMemo(() => listCategoryChoices(awardPrograms), [awardPrograms]);
 
   const saveWin = () => {
     if (!winForm) return;
-    const { id, notes, ...values } = winForm;
-    const data = { ...values, notes: notes.trim() || null };
+    const { id, notes, categoryId, ...values } = winForm;
+    const data = { ...values, categoryId: categoryId || null, notes: notes.trim() || null };
     if (id) updateWin.mutate({ id, ...data });
     else createWin.mutate(data);
   };
@@ -184,6 +179,7 @@ export default function AdminAwardRestrictions() {
                                   recipientName: win.recipientName,
                                   recipientType: win.recipientType,
                                   category: win.category,
+                                  categoryId: win.categoryId ?? '',
                                   awardYear: win.awardYear,
                                   restrictionYears: win.restrictionYears,
                                   notes: win.notes ?? '',
@@ -312,7 +308,7 @@ export default function AdminAwardRestrictions() {
           <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{winForm?.id ? 'Edit Winner' : 'Add Winner'}</DialogTitle>
-              <DialogDescription>Use the same category wording as the award form so entries can be matched.</DialogDescription>
+              <DialogDescription>The category is linked to the award form, so renaming it later keeps the match.</DialogDescription>
             </DialogHeader>
             {winForm && (
               <div className="space-y-4 py-2">
@@ -339,16 +335,22 @@ export default function AdminAwardRestrictions() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="win-category">Award Category</Label>
-                  <Input
+                  <select
                     id="win-category"
-                    list="award-category-choices"
-                    value={winForm.category}
-                    maxLength={255}
-                    onChange={(e) => setWinForm({ ...winForm, category: e.target.value })}
-                  />
-                  <datalist id="award-category-choices">
-                    {categoryChoices.map(choice => <option key={choice} value={choice} />)}
-                  </datalist>
+                    className="w-full h-10 px-3 rounded-md border bg-background"
+                    value={winForm.categoryId}
+                    onChange={(e) => {
+                      const choice = categoryChoices.find(item => item.value === e.target.value);
+                      setWinForm({
+                        ...winForm,
+                        categoryId: e.target.value,
+                        category: choice ? choice.label.replace(/^\s*\d{4}\s+/, '') : winForm.category,
+                      });
+                    }}
+                  >
+                    <option value="">Choose a category...</option>
+                    {categoryChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                  </select>
                 </div>
                 <div className="grid gap-4 grid-cols-2">
                   <div className="space-y-2">

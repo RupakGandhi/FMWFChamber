@@ -13,6 +13,7 @@ export interface AwardWinRecord {
   id: number;
   recipientName: string;
   category: string;
+  categoryId?: string | null;
   awardYear: number;
   restrictionYears: number;
 }
@@ -35,8 +36,29 @@ export function normalizeRecipient(name: string) {
   return words.join(" ");
 }
 
+/** Compares category wording only, ignoring case, punctuation and a leading year. */
 export function normalizeCategory(category: string) {
-  return category.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return category.replace(/^\s*\d{4}\s+/, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** The award categories offered by these programs' forms, by stable value. */
+export function categoryChoices(programs: ProgramSource[]) {
+  const choices = new Map<string, string>();
+  for (const program of programs) {
+    const fieldId = program.settings?.categoryFieldId || DEFAULT_CATEGORY_FIELD_ID;
+    const field = program.formConfig?.fields?.find(item => item.id === fieldId);
+    for (const option of (field?.options ?? []) as (string | { value: string; label: string })[]) {
+      const [value, label] = typeof option === "string" ? [option, option] : [option.value, option.label];
+      if (value && !choices.has(value)) choices.set(value, label);
+    }
+  }
+  return Array.from(choices, ([value, label]) => ({ value, label }));
+}
+
+/** Links a category recorded as text to its stable value, when the wording matches one. */
+export function resolveCategoryId(category: string, choices: { value: string; label: string }[]) {
+  const wanted = normalizeCategory(category);
+  return choices.find(choice => normalizeCategory(choice.label) === wanted)?.value ?? null;
 }
 
 export function eligibleAgainYear(win: Pick<AwardWinRecord, "awardYear" | "restrictionYears">) {
@@ -85,26 +107,33 @@ export function describeEntry(program: ProgramSource, entry: EntrySource) {
   const categoryFieldId = program.settings?.categoryFieldId || DEFAULT_CATEGORY_FIELD_ID;
   const formData = entry.formData ?? {};
   const nominee = String(formData[nomineeFieldId] ?? "").trim();
+  const categoryAnswer = formData[categoryFieldId];
+  const categoryIds = (Array.isArray(categoryAnswer) ? categoryAnswer : [categoryAnswer])
+    .filter(value => value !== undefined && value !== null && value !== "")
+    .map(String);
   return {
     // Empty when this form has no nominee answer, so callers never match on the nominator.
     nominee,
     displayName: nominee || entry.organizationName || entry.applicantName || "Unnamed entry",
     categories: answerLabels(fields.find(field => field.id === categoryFieldId), formData[categoryFieldId]),
+    categoryIds,
   };
 }
 
 /** Wins that restrict this nominee in one of these categories for the given program year. */
 export function findRestrictions<T extends AwardWinRecord>(
   wins: T[],
-  entry: { nominee: string; categories: string[] },
+  entry: { nominee: string; categories: string[]; categoryIds?: string[] },
   year: number,
 ) {
   const recipient = normalizeRecipient(entry.nominee);
   if (!recipient) return [];
   const categories = new Set(entry.categories.map(normalizeCategory));
+  const categoryIds = new Set(entry.categoryIds ?? []);
   return wins.filter(win =>
     normalizeRecipient(win.recipientName) === recipient &&
-    categories.has(normalizeCategory(win.category)) &&
+    // The stable ID decides whenever a win has one; wording is only for older records.
+    (win.categoryId ? categoryIds.has(win.categoryId) : categories.has(normalizeCategory(win.category))) &&
     isWinRestricting(win, year)
   );
 }

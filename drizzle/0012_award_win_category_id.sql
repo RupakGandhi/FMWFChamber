@@ -1,0 +1,1 @@
+ALTER TABLE `award_wins` ADD `categoryId` varchar(100);

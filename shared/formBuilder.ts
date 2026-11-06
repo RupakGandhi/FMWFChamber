@@ -115,7 +115,7 @@ export function assignOptionValues(options: { value: string; label: string }[]) 
   const used = new Set(options.map(option => option.value).filter(Boolean));
   return options.map(option => {
     if (option.value) return option;
-    const base = slugify(option.label) || "option";
+    const base = slugify(option.label.replace(/^\s*\d{4}\s+/, "")) || "option";
     let value = base;
     for (let n = 2; used.has(value); n++) value = `${base}_${n}`;
     used.add(value);

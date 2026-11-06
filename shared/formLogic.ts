@@ -53,6 +53,17 @@ export function withoutHiddenAnswers(fields: FormField[], formData: Record<strin
   return Object.fromEntries(Object.entries(formData).filter(([id]) => !known.has(id) || shown.has(id)));
 }
 
+/** Stored answers for reading: in form order, with the question wording as the label. */
+export function answerEntries(fields: FormField[] | undefined, formData: Record<string, unknown>) {
+  const known = (fields ?? []).filter(field => field.id in formData);
+  const knownIds = new Set(known.map(field => field.id));
+  const readable = (id: string) => id.replace(/_/g, " ").replace(/\b\w/g, letter => letter.toUpperCase());
+  return [
+    ...known.map(field => ({ id: field.id, label: field.label || readable(field.id), value: formData[field.id] })),
+    ...Object.keys(formData).filter(id => !knownIds.has(id)).map(id => ({ id, label: readable(id), value: formData[id] })),
+  ];
+}
+
 export function fileExtension(name: string) {
   const match = /\.([a-z0-9]+)$/i.exec(name);
   return match ? match[1].toLowerCase() : "";

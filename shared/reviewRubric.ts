@@ -48,6 +48,20 @@ export function questionCommentEntries(config: ScoringConfig | null | undefined,
   }));
 }
 
+/** The choices in a reviewer's rating dropdown, with the end labels on the first and last. */
+export function ratingOptions(
+  criterion: Pick<ScoringCriteria, "minScore" | "maxScore">,
+  labels: NonNullable<ScoringConfig["ratingDropdown"]>,
+) {
+  const lowest = minScoreOf(criterion);
+  const options: { value: number; label: string }[] = [];
+  for (let value = lowest; value <= criterion.maxScore; value++) {
+    const name = value === lowest ? labels.lowLabel : value === criterion.maxScore ? labels.highLabel : undefined;
+    options.push({ value, label: name ? `${value} - ${name}` : String(value) });
+  }
+  return options;
+}
+
 export function minScoreOf(criterion: Pick<ScoringCriteria, "minScore">) {
   return criterion.minScore ?? 0;
 }

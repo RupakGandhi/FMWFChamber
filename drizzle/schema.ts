@@ -167,6 +167,15 @@ export interface FormField {
 
 export interface FormConfig {
   fields: FormField[];
+  contactStep?: {
+    title?: string;
+    description?: string;
+    nameLabel?: string;
+    emailLabel?: string;
+    phoneLabel?: string;
+    phoneRequired?: boolean;
+    hideOrganization?: boolean;
+  };
   sections?: { id: string; title: string; description?: string }[];
   submitButtonText?: string;
   confirmationMessage?: string;
@@ -191,6 +200,8 @@ export interface CategoryRubric {
 }
 
 export interface ScoringConfig {
+  // When set, reviewers pick each score from a dropdown instead of a slider.
+  ratingDropdown?: { lowLabel?: string; highLabel?: string };
   criteria: ScoringCriteria[];
   categoryRubrics?: CategoryRubric[];
   maxTotalScore?: number;
@@ -414,6 +425,8 @@ export const awardWins = mysqlTable("award_wins", {
   recipientName: varchar("recipientName", { length: 255 }).notNull(),
   recipientType: mysqlEnum("recipientType", ["business", "individual"]).notNull(),
   category: varchar("category", { length: 255 }).notNull(),
+  // Stable category answer value. Unlike the label, it survives renames and yearly copies.
+  categoryId: varchar("categoryId", { length: 100 }),
   awardYear: int("awardYear").notNull(),
   restrictionYears: int("restrictionYears").default(5).notNull(),
   notes: text("notes"),

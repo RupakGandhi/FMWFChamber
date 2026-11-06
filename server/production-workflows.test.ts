@@ -26,7 +26,7 @@ describe('production application rules', () => {
   it('does not require a conditional field while its condition is hidden', () => {
     const form: FormConfig = {
       fields: [
-        { id: 'has_guest', type: 'radio', label: 'Guest?', options: [{ value: 'yes', label: 'Yes' }] },
+        { id: 'has_guest', type: 'radio', label: 'Guest?', options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }] },
         {
           id: 'guest_name',
           type: 'text',

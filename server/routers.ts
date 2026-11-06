@@ -8,7 +8,8 @@ import * as db from "./db";
 import { notifyApplicationSubmitted, notifyReviewerAssigned, notifyReviewerUnassigned, notifyStatusChanged, generateReviewerAssignmentEmail, generateApplicationConfirmationEmail, generateStatusUpdateEmail, defaultTemplates, replaceTemplateVariables } from "./emailNotifications";
 import { getSmtpConfig, saveSmtpConfig, testSmtpConnection } from "./smtpService";
 import { FormConfig, ScoringConfig, EmailConfig, ProgramSettings, CriteriaScore, SmtpConfig } from "../drizzle/schema";
-import { describeEntry, DEFAULT_RESTRICTION_YEARS, eligibleAgainYear, findRestrictions } from "../shared/awardEligibility";
+import { categoryChoices, describeEntry, DEFAULT_RESTRICTION_YEARS, eligibleAgainYear, findRestrictions, resolveCategoryId } from "../shared/awardEligibility";
+import { isChoiceField } from "../shared/formBuilder";
 import { isDisplayOnly, isUploadedFile, visibleFields, withoutHiddenAnswers } from "../shared/formLogic";
 import { buildLeaderboards } from "../shared/leaderboard";
 import { cleanQuestionComments, minScoreOf, ratedCriteria, resolveCriteria } from "../shared/reviewRubric";
@@ -40,6 +41,7 @@ const awardWinInput = z.object({
   recipientName: z.string().trim().min(1, 'Name is required').max(255),
   recipientType: z.enum(['business', 'individual']),
   category: z.string().trim().min(1, 'Category is required').max(255),
+  categoryId: z.string().trim().max(100).nullable().optional(),
   awardYear: z.number().int().min(1900).max(2100),
   restrictionYears: z.number().int().min(1).max(50).default(DEFAULT_RESTRICTION_YEARS),
   notes: z.string().trim().max(2000).nullable().optional(),
@@ -81,6 +83,13 @@ export function validateConfiguredForm(formConfig: FormConfig | null | undefined
       throw new TRPCError({ code: 'BAD_REQUEST', message: `Required field missing: ${field.label}` });
     }
     if (isBlank(value)) continue;
+    if (isChoiceField(field) && field.options?.length) {
+      const allowed = (field.options as (string | { value: string })[]).map(option => (typeof option === 'string' ? option : option.value));
+      const answers = Array.isArray(value) ? value : [value];
+      if (answers.some(answer => !allowed.includes(String(answer)))) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: `${field.label}: please choose one of the listed options.` });
+      }
+    }
     if (field.type === 'number') {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) {
@@ -128,6 +137,13 @@ async function attachUploads(program: NonNullable<Awaited<ReturnType<typeof db.g
   return tokens;
 }
 
+/** A win's stable category: as chosen by staff, or found from its wording. */
+async function winCategoryId(win: { category: string; categoryId?: string | null }) {
+  if (win.categoryId) return win.categoryId;
+  const programs = await db.getPrograms();
+  return resolveCategoryId(win.category, categoryChoices(programs.filter(program => program.programType === 'awards')));
+}
+
 async function saveProgramEditsOrThrow(id: number, data: Parameters<typeof db.saveProgramEdits>[1], expectedRevision?: number) {
   if (await db.saveProgramEdits(id, data, expectedRevision)) return;
   throw new TRPCError({
@@ -152,6 +168,9 @@ export function validateCriteriaScores(
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'An unknown scoring criterion was submitted.' });
     }
     const minScore = minScoreOf(configured);
+    if (program?.scoringConfig?.ratingDropdown && !Number.isInteger(score.score)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `${configured.name} must be a whole number.` });
+    }
     if (!Number.isFinite(score.score) || score.score < minScore || score.score > configured.maxScore) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -424,13 +443,13 @@ export const appRouter = router({
     }),
 
     createWin: adminProcedure.input(awardWinInput).mutation(async ({ input, ctx }) => {
-      const id = await db.createAwardWin({ ...input, createdBy: ctx.user.id });
+      const id = await db.createAwardWin({ ...input, categoryId: await winCategoryId(input), createdBy: ctx.user.id });
       return { id };
     }),
 
     updateWin: adminProcedure.input(awardWinInput.extend({ id: z.number() })).mutation(async ({ input }) => {
       const { id, ...data } = input;
-      await db.updateAwardWin(id, data);
+      await db.updateAwardWin(id, { ...data, categoryId: await winCategoryId(data) });
       return { success: true };
     }),
 
@@ -510,11 +529,13 @@ export const appRouter = router({
           ineligibleReason: application.eligibilityReason,
         };
       });
-      const { programId, ...options } = input;
+      // Lists are always per category, because categories use different reviewer forms.
+      const categories = Array.from(new Set(applications.flatMap(application => application.categories))).sort();
+      const category = input.category && categories.includes(input.category) ? input.category : categories[0];
       return {
-        hasCategoryForms: !!program.scoringConfig?.categoryRubrics?.length,
-        categories: Array.from(new Set(applications.flatMap(application => application.categories))).sort(),
-        ...buildLeaderboards(applications, data.scores, data.assignments, options),
+        categories,
+        category,
+        ...buildLeaderboards(applications, data.scores, data.assignments, { category }),
       };
     }),
   }),
@@ -528,9 +549,11 @@ export const appRouter = router({
       return db.getProgramById(input.id);
     }),
     
-    getBySlug: publicProcedure.input(z.object({ slug: z.string() })).query(async ({ input }) => {
+    getBySlug: publicProcedure.input(z.object({ slug: z.string() })).query(async ({ input, ctx }) => {
       const program = await db.getProgramBySlug(input.slug);
-      if (!program || (program.status !== 'open' && program.status !== 'closed')) {
+      // Signed-in staff can preview a Draft; it stays hidden from everyone else.
+      const staffPreview = program?.status === 'draft' && ctx.user?.role === 'admin';
+      if (!program || (program.status !== 'open' && program.status !== 'closed' && !staffPreview)) {
         return null;
       }
       return program;
@@ -669,6 +692,9 @@ export const appRouter = router({
       const fileTokens = await attachUploads(program, formData);
       if (settings.requireOrganization && !input.organizationName?.trim()) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Organization / Company is required.' });
+      }
+      if (program.formConfig?.contactStep?.phoneRequired && !input.applicantPhone?.trim()) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: `Required field missing: ${program.formConfig.contactStep.phoneLabel || 'Phone Number'}` });
       }
       if (input.applicantEmail && await db.isApplicantRestricted(input.applicantEmail)) {
         throw new TRPCError({

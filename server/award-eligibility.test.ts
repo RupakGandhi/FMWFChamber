@@ -79,7 +79,7 @@ describe("reading an entry from a program's form", () => {
       formData: { nominee_business: "Acme Roofing", award_category: "boy" },
       applicantName: "Nominator Person",
     });
-    expect(entry).toEqual({ nominee: "Acme Roofing", displayName: "Acme Roofing", categories: ["Business of the Year"] });
+    expect(entry).toEqual({ nominee: "Acme Roofing", displayName: "Acme Roofing", categories: ["Business of the Year"], categoryIds: ["boy"] });
   });
 
   it("honours per-program field settings", () => {

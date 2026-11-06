@@ -10,7 +10,8 @@ import { ArrowLeft, Send, Loader2, Star, FileText, CheckCircle, Clock, Lock } fr
 import { toast } from "sonner";
 import { ScoringCriteria } from "../../../../drizzle/schema";
 import AnswerValue from "@/components/AnswerValue";
-import { minScoreOf, ratedCriteria, resolveCriteria } from "@shared/reviewRubric";
+import { answerEntries } from "@shared/formLogic";
+import { minScoreOf, ratedCriteria, ratingOptions, resolveCriteria } from "@shared/reviewRubric";
 
 export default function ReviewerApplication() {
   const { token, applicationId } = useParams<{ token: string; applicationId: string }>();
@@ -67,6 +68,7 @@ export default function ReviewerApplication() {
   const { application, program, existingScore } = data;
   const criteria = resolveCriteria(program, application);
   const rated = ratedCriteria(criteria);
+  const ratingDropdown = program?.scoringConfig?.ratingDropdown;
   
   // Check review settings - only enforce when toggles are enabled
   const settings = program?.settings as any;
@@ -209,10 +211,10 @@ export default function ReviewerApplication() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-6">
-                  {Object.entries(formData).map(([key, value]) => (
+                  {answerEntries(program?.formConfig?.fields, formData).map(({ id: key, label, value }) => (
                     <div key={key} className="border-b pb-4 last:border-0">
                       <h4 className="font-medium text-sm text-muted-foreground mb-2">
-                        {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                        {label}
                       </h4>
                       <p className="whitespace-pre-wrap">
                         <AnswerValue fields={program?.formConfig?.fields} fieldId={key} value={value} reviewerToken={token} />
@@ -280,7 +282,7 @@ export default function ReviewerApplication() {
                   Scoring Criteria
                 </CardTitle>
                 <CardDescription>
-                  Rate each criterion using the slider
+                  Rate each criterion
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">
@@ -312,18 +314,32 @@ export default function ReviewerApplication() {
                           )}
                         </div>
                         <div className="text-right">
-                          <span className="text-2xl font-bold">{scores[criterion.id] ?? minScoreOf(criterion)}</span>
+                          <span className="text-2xl font-bold">{scores[criterion.id] ?? (ratingDropdown ? '—' : minScoreOf(criterion))}</span>
                           <span className="text-muted-foreground">/{criterion.maxScore}</span>
                         </div>
                       </div>
-                      <Slider
-                        value={[scores[criterion.id] ?? minScoreOf(criterion)]}
-                        min={minScoreOf(criterion)}
-                        max={criterion.maxScore}
-                        step={1}
-                        onValueChange={(value) => handleScoreChange(criterion.id, value[0])}
-                        className="w-full"
-                      />
+                      {ratingDropdown ? (
+                        <select
+                          aria-label={`Rating for ${criterion.name}`}
+                          className="w-full h-10 px-3 rounded-md border bg-background"
+                          value={scores[criterion.id] ?? ''}
+                          onChange={(e) => handleScoreChange(criterion.id, Number(e.target.value))}
+                        >
+                          <option value="" disabled>Select a rating...</option>
+                          {ratingOptions(criterion, ratingDropdown).map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Slider
+                          value={[scores[criterion.id] ?? minScoreOf(criterion)]}
+                          min={minScoreOf(criterion)}
+                          max={criterion.maxScore}
+                          step={1}
+                          onValueChange={(value) => handleScoreChange(criterion.id, value[0])}
+                          className="w-full"
+                        />
+                      )}
                       <Textarea
                         placeholder={criterion.commentRequired ? 'Comment (required)' : 'Comment (optional)'}
                         value={comments[criterion.id] || ''}

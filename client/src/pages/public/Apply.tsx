@@ -77,7 +77,8 @@ export default function PublicApply() {
   let currentSection = { title: 'Application Details', fields: [] as FormField[] };
   
   // First step is always contact info
-  steps.push({ title: 'Contact Information', fields: [] });
+  const contactStep = formConfig.contactStep ?? {};
+  steps.push({ title: contactStep.title || 'Contact Information', fields: [] });
   
   visibleFields(fields, formData).forEach(field => {
     if (field.type === 'heading') {
@@ -349,6 +350,10 @@ export default function PublicApply() {
         toast.error('Please fill in your name and email');
         return;
       }
+      if (contactStep.phoneRequired && !applicantInfo.phone.trim()) {
+        toast.error(`Please fill in: ${contactStep.phoneLabel || 'Phone Number'}`);
+        return;
+      }
     }
     setCurrentStep(prev => Math.min(prev + 1, steps.length - 1));
   };
@@ -399,6 +404,12 @@ export default function PublicApply() {
       </header>
 
       <main className="container py-6 sm:py-8 px-4 max-w-2xl">
+        {program.status === 'draft' && (
+          <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+            Draft preview for staff. This form is hidden from the public and cannot accept submissions or uploads.
+          </p>
+        )}
+
         {/* Program Info */}
         <div className="mb-6 sm:mb-8 text-center">
           <h2 className="text-xl sm:text-3xl font-bold mb-2">{program.name}</h2>
@@ -439,7 +450,7 @@ export default function PublicApply() {
             {currentStep > 0 && <CardTitle>{steps[currentStep]?.title}</CardTitle>}
             <CardDescription>
               {currentStep === 0
-                ? 'Please provide your contact information'
+                ? contactStep.description || 'Please provide your contact information'
                 : 'Fill out the following questions'}
             </CardDescription>
           </CardHeader>
@@ -448,7 +459,7 @@ export default function PublicApply() {
               // Contact Information Step
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="name">Full Name <span className="text-destructive">*</span></Label>
+                  <Label htmlFor="name">{contactStep.nameLabel || 'Full Name'} <span className="text-destructive">*</span></Label>
                   <Input
                     id="name"
                     placeholder="John Smith"
@@ -458,7 +469,7 @@ export default function PublicApply() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="email">Email Address <span className="text-destructive">*</span></Label>
+                  <Label htmlFor="email">{contactStep.emailLabel || 'Email Address'} <span className="text-destructive">*</span></Label>
                   <Input
                     id="email"
                     type="email"
@@ -469,7 +480,10 @@ export default function PublicApply() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number</Label>
+                  <Label htmlFor="phone">
+                    {contactStep.phoneLabel || 'Phone Number'}
+                    {contactStep.phoneRequired && <span className="text-destructive ml-1">*</span>}
+                  </Label>
                   <Input
                     id="phone"
                     type="tel"
@@ -478,15 +492,17 @@ export default function PublicApply() {
                     onChange={(e) => setApplicantInfo({ ...applicantInfo, phone: e.target.value })}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="organization">Organization / Company</Label>
-                  <Input
-                    id="organization"
-                    placeholder="Your company name"
-                    value={applicantInfo.organization}
-                    onChange={(e) => setApplicantInfo({ ...applicantInfo, organization: e.target.value })}
-                  />
-                </div>
+                {!contactStep.hideOrganization && (
+                  <div className="space-y-2">
+                    <Label htmlFor="organization">Organization / Company</Label>
+                    <Input
+                      id="organization"
+                      placeholder="Your company name"
+                      value={applicantInfo.organization}
+                      onChange={(e) => setApplicantInfo({ ...applicantInfo, organization: e.target.value })}
+                    />
+                  </div>
+                )}
               </>
             ) : (
               // Dynamic Form Fields
