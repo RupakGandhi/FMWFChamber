@@ -18,7 +18,8 @@ import {
   participantForms, InsertParticipantForm,
   awardWins, InsertAwardWin,
   staffEditDrafts,
-  applicationFiles
+  applicationFiles,
+  applicationDrafts, ApplicationDraft
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { nanoid } from 'nanoid';
@@ -845,21 +846,27 @@ export async function getApplicationFile(token: string) {
   return rows[0];
 }
 
-/** An upload waiting to be attached to a new application on this program and question. */
-export async function getUnclaimedFile(token: string, programId: number, fieldId: string) {
+/**
+ * An upload waiting to be attached to a new application on this program and question.
+ * A file kept by a saved application can only be used by that saved application.
+ */
+export async function getUnclaimedFile(token: string, programId: number, fieldId: string, draftId?: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db.select({
     token: applicationFiles.token,
     originalName: applicationFiles.originalName,
     fileSize: applicationFiles.fileSize,
+    draftId: applicationFiles.draftId,
   }).from(applicationFiles).where(and(
     eq(applicationFiles.token, token),
     eq(applicationFiles.programId, programId),
     eq(applicationFiles.fieldId, fieldId),
     isNull(applicationFiles.applicationId),
   )).limit(1);
-  return rows[0];
+  const file = rows[0];
+  if (!file || (file.draftId !== null && file.draftId !== draftId)) return undefined;
+  return file;
 }
 
 export async function claimApplicationFiles(tokens: string[], applicationId: number) {
@@ -875,8 +882,58 @@ export async function deleteAbandonedFiles() {
   if (!db) return;
   await db.delete(applicationFiles).where(and(
     isNull(applicationFiles.applicationId),
+    isNull(applicationFiles.draftId),
     lt(applicationFiles.createdAt, new Date(Date.now() - ABANDONED_FILE_MS)),
   ));
+}
+
+// Save and Return
+const APPLICATION_DRAFT_JSON_FIELDS = ["formData"] as const;
+
+export async function getApplicationDraftByToken(token: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(applicationDrafts).where(eq(applicationDrafts.token, token)).limit(1);
+  return rows[0] ? hydrateJsonFields(rows[0], APPLICATION_DRAFT_JSON_FIELDS) : undefined;
+}
+
+export async function createApplicationDraft(draft: typeof applicationDrafts.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(applicationDrafts).values(draft);
+  return result.insertId;
+}
+
+export async function updateApplicationDraft(id: number, data: Partial<ApplicationDraft>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(applicationDrafts).set(data).where(eq(applicationDrafts.id, id));
+}
+
+export async function getApplicationDrafts(programId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select().from(applicationDrafts)
+    .where(eq(applicationDrafts.programId, programId))
+    .orderBy(desc(applicationDrafts.savedAt));
+  return hydrateJsonRows(rows, APPLICATION_DRAFT_JSON_FIELDS);
+}
+
+/** Keeps a saved application's uploads until it is submitted or deleted. */
+export async function attachFilesToDraft(tokens: string[], draftId: number) {
+  if (tokens.length === 0) return;
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(applicationFiles).set({ draftId })
+    .where(and(inArray(applicationFiles.token, tokens), isNull(applicationFiles.applicationId)));
+}
+
+/** Removes a saved application and any of its uploads that were never submitted. */
+export async function deleteApplicationDraft(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(applicationFiles).where(and(eq(applicationFiles.draftId, id), isNull(applicationFiles.applicationId)));
+  await db.delete(applicationDrafts).where(eq(applicationDrafts.id, id));
 }
 
 // Autosaved staff edits
@@ -1134,6 +1191,7 @@ export async function deleteProgramPermanently(programId: number) {
   await db.delete(emailLogs).where(eq(emailLogs.programId, programId));
   await db.delete(archives).where(eq(archives.programId, programId));
   await db.delete(staffEditDrafts).where(eq(staffEditDrafts.programId, programId));
+  await db.delete(applicationDrafts).where(eq(applicationDrafts.programId, programId));
   await db.delete(applicationFiles).where(eq(applicationFiles.programId, programId));
   await db.delete(applications).where(eq(applications.programId, programId));
   await db.delete(programs).where(eq(programs.id, programId));

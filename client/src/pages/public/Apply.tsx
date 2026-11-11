@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,8 +8,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
-import { useParams, useLocation } from "wouter";
-import { ClipboardList, ArrowRight, ArrowLeft, Send, Loader2 } from "lucide-react";
+import { useParams, useLocation, useSearch } from "wouter";
+import { ClipboardList, ArrowRight, ArrowLeft, Send, Loader2, Bookmark, Copy } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { FormField } from "../../../../drizzle/schema";
 import RichInstructions from "@/components/RichInstructions";
@@ -30,6 +31,44 @@ export default function PublicApply() {
     phone: '',
     organization: '',
   });
+
+  // Save and Return: the private token for this applicant's saved copy, if any.
+  const resumeToken = new URLSearchParams(useSearch()).get('resume');
+  const [draftToken, setDraftToken] = useState<string | null>(null);
+  const [savedLink, setSavedLink] = useState<{ link: string; emailed: boolean } | null>(null);
+  const openedDraft = useRef(false);
+
+  const saveDraftMutation = trpc.applicationDrafts.save.useMutation({
+    onSuccess: (result) => {
+      setDraftToken(result.token);
+      setSavedLink({ link: `${window.location.origin}/apply/${slug}?resume=${result.token}`, emailed: result.emailed });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const openDraftMutation = trpc.applicationDrafts.open.useMutation({
+    onSuccess: (draft) => {
+      setApplicantInfo({
+        name: draft.applicantName,
+        email: draft.applicantEmail,
+        phone: draft.applicantPhone,
+        organization: draft.organizationName,
+      });
+      setFormData(draft.formData as Record<string, unknown>);
+      setCurrentStep(draft.currentStep);
+      setDraftToken(resumeToken);
+      toast.success('Welcome back. Your saved application is ready to finish.');
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  useEffect(() => {
+    if (!resumeToken || !program || openedDraft.current) return;
+    openedDraft.current = true;
+    openDraftMutation.mutate({ programSlug: slug || '', token: resumeToken });
+    // Opens the saved application once, when the program has loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeToken, program]);
 
   const submitMutation = trpc.applications.submit.useMutation({
     onSuccess: (data) => {
@@ -383,8 +422,33 @@ export default function PublicApply() {
       applicantEmail: applicantInfo.email,
       applicantPhone: applicantInfo.phone || undefined,
       organizationName: applicantInfo.organization || undefined,
+      draftToken: draftToken ?? undefined,
     });
   };
+
+  const saveForLater = () => {
+    if (uploadingFields.length > 0) {
+      toast.error('Please wait for your file to finish uploading.');
+      return;
+    }
+    if (!applicantInfo.name.trim() || !applicantInfo.email.trim()) {
+      setCurrentStep(0);
+      toast.error('Please enter your name and email so we can save your application.');
+      return;
+    }
+    saveDraftMutation.mutate({
+      programSlug: slug || '',
+      token: draftToken ?? undefined,
+      applicantName: applicantInfo.name,
+      applicantEmail: applicantInfo.email,
+      applicantPhone: applicantInfo.phone || undefined,
+      organizationName: applicantInfo.organization || undefined,
+      formData: withoutHiddenAnswers(fields, formData),
+      currentStep,
+    });
+  };
+
+  const saveAndReturnEnabled = program.status === 'open' && !!program.settings?.saveAndReturnEnabled;
 
   const isLastStep = currentStep === steps.length - 1;
 
@@ -407,6 +471,13 @@ export default function PublicApply() {
         {program.status === 'draft' && (
           <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="status">
             Draft preview for staff. This form is hidden from the public and cannot accept submissions or uploads.
+          </p>
+        )}
+
+        {saveAndReturnEnabled && (
+          <p className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+            You can start your application, save it and come back to finish it later. Use <strong>Save and Return Later</strong> at
+            the bottom of any page to get a private link to your application.
           </p>
         )}
 
@@ -531,6 +602,17 @@ export default function PublicApply() {
             Back
           </Button>
           
+          {saveAndReturnEnabled && (
+            <Button variant="outline" onClick={saveForLater} disabled={saveDraftMutation.isPending}>
+              {saveDraftMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Bookmark className="h-4 w-4 mr-2" />
+              )}
+              Save and Return Later
+            </Button>
+          )}
+
           {isLastStep ? (
             <Button onClick={handleSubmit} disabled={submitMutation.isPending}>
               {submitMutation.isPending ? (
@@ -553,6 +635,38 @@ export default function PublicApply() {
           )}
         </div>
       </main>
+
+      <Dialog open={savedLink !== null} onOpenChange={(open) => !open && setSavedLink(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Your application is saved</DialogTitle>
+            <DialogDescription>
+              Use this private link to come back and finish. Your application is not submitted until you click Submit on the last page.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input readOnly value={savedLink?.link ?? ''} aria-label="Your private link" onFocus={(e) => e.target.select()} />
+            <p className="text-sm text-muted-foreground">
+              {savedLink?.emailed
+                ? `We also emailed this link to ${applicantInfo.email}.`
+                : 'Copy this link and keep it somewhere safe. Anyone with the link can open and edit your saved application.'}
+            </p>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                navigator.clipboard.writeText(savedLink?.link ?? '');
+                toast.success('Link copied');
+              }}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Copy Link
+            </Button>
+            <Button onClick={() => setSavedLink(null)}>Keep Working</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

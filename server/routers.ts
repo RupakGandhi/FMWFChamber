@@ -12,6 +12,10 @@ import { categoryChoices, describeEntry, DEFAULT_RESTRICTION_YEARS, eligibleAgai
 import { isChoiceField } from "../shared/formBuilder";
 import { isDisplayOnly, isUploadedFile, visibleFields, withoutHiddenAnswers } from "../shared/formLogic";
 import { buildLeaderboards } from "../shared/leaderboard";
+import { DEFAULT_DRAFT_REMINDER, DRAFT_LINK_EMAIL, draftProgress, MAX_DRAFT_BYTES, RESUME_LINK_VARIABLE, reopenedAfterReminder } from "../shared/applicationDrafts";
+import { cleanDraftAnswers, sendDraftEmail } from "./applicationDrafts";
+import { isSmtpEnabled } from "./smtpService";
+import { nanoid } from "nanoid";
 import { cleanQuestionComments, minScoreOf, ratedCriteria, resolveCriteria } from "../shared/reviewRubric";
 import { generateTemporaryPassword, hashPassword, normalizeUsername, validatePasswordPolicy, validateUsername, verifyPassword } from "./nativeAuth";
 
@@ -122,12 +126,12 @@ export function withoutStaffFields<T extends object>(application: T) {
 }
 
 /** Replaces each file answer with the verified upload, and returns the tokens to claim. */
-async function attachUploads(program: NonNullable<Awaited<ReturnType<typeof db.getProgramById>>>, formData: Record<string, unknown>) {
+async function attachUploads(program: NonNullable<Awaited<ReturnType<typeof db.getProgramById>>>, formData: Record<string, unknown>, draftId?: number) {
   const tokens: string[] = [];
   for (const field of visibleFields(program.formConfig?.fields || [], formData)) {
     if (field.type !== 'file' || isBlank(formData[field.id])) continue;
     const value = formData[field.id];
-    const file = isUploadedFile(value) ? await db.getUnclaimedFile(value.fileToken, program.id, field.id) : undefined;
+    const file = isUploadedFile(value) ? await db.getUnclaimedFile(value.fileToken, program.id, field.id, draftId) : undefined;
     if (!file) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: `Please upload ${field.label} again.` });
     }
@@ -135,6 +139,44 @@ async function attachUploads(program: NonNullable<Awaited<ReturnType<typeof db.g
     tokens.push(file.token);
   }
   return tokens;
+}
+
+const DRAFT_SAVE_WINDOW_MS = 15 * 60 * 1000;
+const DRAFT_SAVE_LIMIT = 60;
+const draftSaveCounts = new Map<string, { count: number; resetAt: number }>();
+
+function draftSaveLimited(key: string, now = Date.now()) {
+  const entry = draftSaveCounts.get(key);
+  if (!entry || entry.resetAt <= now) {
+    draftSaveCounts.set(key, { count: 1, resetAt: now + DRAFT_SAVE_WINDOW_MS });
+    return false;
+  }
+  entry.count++;
+  return entry.count > DRAFT_SAVE_LIMIT;
+}
+
+/** A program that is open and accepting saved applications, or an error explaining why not. */
+async function programAcceptingDrafts(slug: string) {
+  const program = await db.getProgramBySlug(slug);
+  if (!program || program.status !== 'open' || !program.settings?.saveAndReturnEnabled) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Saving is not available for this form.' });
+  }
+  if (applicationDeadlineHasPassed(program.settings.applicationDeadline)) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'The application deadline has passed.' });
+  }
+  return program;
+}
+
+const resumeLink = (slug: string, token: string) => `${publicBaseUrl()}/apply/${slug}?resume=${token}`;
+
+function draftEmailValues(program: { name: string; settings?: ProgramSettings | null }, name: string, link: string) {
+  const deadline = program.settings?.applicationDeadline?.slice(0, 10);
+  return {
+    applicant_name: name,
+    program_name: program.name,
+    resume_link: link,
+    deadline_line: deadline ? `\nThe application deadline is ${deadline}.\n` : '',
+  };
 }
 
 /** A win's stable category: as chosen by staff, or found from its wording. */
@@ -405,6 +447,164 @@ export const appRouter = router({
   }),
 
   // Program management (admin only)
+  // Save and Return for applicants. The private link is the only way to open a saved
+  // application; staff see who has one in progress, never its answers.
+  applicationDrafts: router({
+    save: publicProcedure.input(z.object({
+      programSlug: z.string(),
+      token: z.string().max(64).optional(),
+      applicantName: z.string().trim().min(1, 'Please enter your name before saving.').max(255),
+      applicantEmail: z.string().trim().email('Please enter a valid email before saving.').max(320),
+      applicantPhone: z.string().trim().max(50).optional(),
+      organizationName: z.string().trim().max(255).optional(),
+      formData: z.record(z.string(), z.unknown()),
+      currentStep: z.number().int().min(0).max(100),
+    })).mutation(async ({ input, ctx }) => {
+      if (draftSaveLimited(ctx.req.ip ?? 'unknown')) {
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many saves. Please wait a few minutes and try again.' });
+      }
+      const program = await programAcceptingDrafts(input.programSlug);
+      const existing = input.token ? await db.getApplicationDraftByToken(input.token) : undefined;
+      if (input.token && (!existing || existing.programId !== program.id)) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'This saved application link is not valid.' });
+      }
+      const { formData, fileTokens } = await cleanDraftAnswers(program.id, program.formConfig?.fields ?? [], input.formData, existing?.id);
+      if (JSON.stringify(formData).length > MAX_DRAFT_BYTES) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'This application is too large to save. Please shorten some answers.' });
+      }
+      const values = {
+        applicantName: input.applicantName,
+        applicantEmail: input.applicantEmail,
+        applicantPhone: input.applicantPhone || null,
+        organizationName: input.organizationName || null,
+        formData,
+        currentStep: input.currentStep,
+        savedAt: new Date(),
+      };
+      let token = existing?.token;
+      let id = existing?.id;
+      if (existing && id) {
+        await db.updateApplicationDraft(id, values);
+      } else {
+        token = nanoid(40);
+        id = await db.createApplicationDraft({ ...values, programId: program.id, token });
+      }
+      await db.attachFilesToDraft(fileTokens, id);
+
+      // The link is shown on screen either way; email is a convenience when it is set up.
+      let emailed = false;
+      if (!existing || existing.applicantEmail !== input.applicantEmail) {
+        try {
+          const sent = await sendDraftEmail({
+            to: input.applicantEmail,
+            name: input.applicantName,
+            programId: program.id,
+            ...DRAFT_LINK_EMAIL,
+            values: draftEmailValues(program, input.applicantName, resumeLink(program.slug, token!)),
+          });
+          emailed = sent.success;
+        } catch (error) {
+          console.warn('Failed to email saved application link:', error);
+        }
+      }
+      return { token: token!, emailed };
+    }),
+
+    // A mutation because opening a saved application is recorded for staff.
+    open: publicProcedure.input(z.object({
+      programSlug: z.string(),
+      token: z.string().max(64),
+    })).mutation(async ({ input }) => {
+      const program = await programAcceptingDrafts(input.programSlug);
+      const draft = await db.getApplicationDraftByToken(input.token);
+      if (!draft || draft.programId !== program.id) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'This saved application link is not valid, or the application was already submitted.' });
+      }
+      await db.updateApplicationDraft(draft.id, { lastResumedAt: new Date() });
+      return {
+        applicantName: draft.applicantName,
+        applicantEmail: draft.applicantEmail,
+        applicantPhone: draft.applicantPhone ?? '',
+        organizationName: draft.organizationName ?? '',
+        formData: draft.formData ?? {},
+        currentStep: draft.currentStep,
+        savedAt: draft.savedAt,
+      };
+    }),
+
+    list: adminProcedure.input(z.object({ programId: z.number() })).query(async ({ input }) => {
+      const program = await db.getProgramById(input.programId);
+      if (!program) throw new TRPCError({ code: 'NOT_FOUND', message: 'Program not found' });
+      const drafts = await db.getApplicationDrafts(input.programId);
+      const values = draftEmailValues(program, '{{applicant_name}}', RESUME_LINK_VARIABLE);
+      const fill = (text: string) => text.replace(/\{\{(program_name|deadline_line)\}\}/g, (_, key: 'program_name' | 'deadline_line') => values[key]);
+      return {
+        enabled: !!program.settings?.saveAndReturnEnabled,
+        emailEnabled: await isSmtpEnabled(),
+        reminderTemplate: { subject: fill(DEFAULT_DRAFT_REMINDER.subject), body: fill(DEFAULT_DRAFT_REMINDER.body) },
+        drafts: drafts.map(draft => ({
+          id: draft.id,
+          applicantName: draft.applicantName,
+          applicantEmail: draft.applicantEmail,
+          progress: draftProgress(program.formConfig?.fields ?? [], draft.formData ?? {}),
+          savedAt: draft.savedAt,
+          lastResumedAt: draft.lastResumedAt,
+          reminderCount: draft.reminderCount,
+          lastReminderAt: draft.lastReminderAt,
+          lastReminderStatus: draft.lastReminderStatus,
+          lastReminderError: draft.lastReminderError,
+          reopenedAfterReminder: reopenedAfterReminder(draft),
+        })),
+      };
+    }),
+
+    sendReminders: adminProcedure.input(z.object({
+      programId: z.number(),
+      draftIds: z.array(z.number()).min(1).max(500),
+      subject: z.string().trim().min(1).max(300),
+      body: z.string().trim().min(1).max(10000),
+    })).mutation(async ({ input }) => {
+      if (!input.body.includes(RESUME_LINK_VARIABLE)) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: `The message must include ${RESUME_LINK_VARIABLE} so applicants get their link.` });
+      }
+      if (!(await isSmtpEnabled())) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Email is not set up yet. Turn it on under System → Email Configuration first.' });
+      }
+      const program = await db.getProgramById(input.programId);
+      if (!program) throw new TRPCError({ code: 'NOT_FOUND', message: 'Program not found' });
+      const drafts = (await db.getApplicationDrafts(input.programId)).filter(draft => input.draftIds.includes(draft.id));
+      const results: { id: number; success: boolean; error?: string }[] = [];
+      for (const draft of drafts) {
+        let result: { success: boolean; error?: string };
+        try {
+          result = await sendDraftEmail({
+            to: draft.applicantEmail,
+            name: draft.applicantName,
+            programId: program.id,
+            subject: input.subject,
+            body: input.body,
+            values: draftEmailValues(program, draft.applicantName, resumeLink(program.slug, draft.token)),
+          });
+        } catch (error) {
+          result = { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+        }
+        await db.updateApplicationDraft(draft.id, {
+          lastReminderAt: new Date(),
+          lastReminderStatus: result.success ? 'sent' : 'failed',
+          lastReminderError: result.success ? null : (result.error ?? 'Unknown error').slice(0, 500),
+          reminderCount: draft.reminderCount + (result.success ? 1 : 0),
+        });
+        results.push({ id: draft.id, success: result.success, error: result.error });
+      }
+      return { sent: results.filter(item => item.success).length, failed: results.filter(item => !item.success).length, results };
+    }),
+
+    delete: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+      await db.deleteApplicationDraft(input.id);
+      return { success: true };
+    }),
+  }),
+
   // Autosaved staff edits. Private to the signed-in staff member and never applied to the
   // live program; only Save Changes does that.
   staffDrafts: router({
@@ -675,6 +875,7 @@ export const appRouter = router({
       applicantEmail: z.string().email().optional(),
       applicantPhone: z.string().optional(),
       organizationName: z.string().optional(),
+      draftToken: z.string().max(64).optional(),
     })).mutation(async ({ input }) => {
       const program = await db.getProgramBySlug(input.programSlug);
       if (!program) {
@@ -689,7 +890,9 @@ export const appRouter = router({
       }
       const formData = withoutHiddenAnswers(program.formConfig?.fields || [], input.formData);
       validateConfiguredForm(program.formConfig, formData);
-      const fileTokens = await attachUploads(program, formData);
+      const savedDraft = input.draftToken ? await db.getApplicationDraftByToken(input.draftToken) : undefined;
+      const ownDraft = savedDraft && savedDraft.programId === program.id ? savedDraft : undefined;
+      const fileTokens = await attachUploads(program, formData, ownDraft?.id);
       if (settings.requireOrganization && !input.organizationName?.trim()) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Organization / Company is required.' });
       }
@@ -720,6 +923,8 @@ export const appRouter = router({
         await db.addToWaitlist(result.id, program.id);
       }
       if (fileTokens.length > 0) await db.claimApplicationFiles(fileTokens, result.id);
+      // A submitted application no longer needs its saved copy.
+      if (ownDraft) await db.deleteApplicationDraft(ownDraft.id);
       
       // Send notification for new application
       if (input.applicantName && input.applicantEmail) {
@@ -1480,6 +1685,7 @@ export const appRouter = router({
         applicationDeadline: z.string().optional(),
         nomineeFieldId: z.string().optional(),
         categoryFieldId: z.string().optional(),
+        saveAndReturnEnabled: z.boolean().optional(),
       }),
       expectedRevision: z.number().optional(),
     })).mutation(async ({ input }) => {

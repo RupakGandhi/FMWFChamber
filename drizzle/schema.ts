@@ -278,6 +278,8 @@ export interface ProgramSettings {
   workflowStages?: { id: string; name: string; color?: string }[];
   // Application deadline (ISO date string, displayed on homepage)
   applicationDeadline?: string;
+  // Applicants can save an unfinished application and return with a private link.
+  saveAndReturnEnabled?: boolean;
 }
 
 export interface QuestionComment {
@@ -445,6 +447,8 @@ export const applicationFiles = mysqlTable("application_files", {
   token: varchar("token", { length: 64 }).notNull().unique(),
   programId: int("programId").notNull(),
   applicationId: int("applicationId"),
+  // Set while the file belongs to a saved, unsubmitted application.
+  draftId: int("draftId"),
   fieldId: varchar("fieldId", { length: 100 }).notNull(),
   originalName: varchar("originalName", { length: 255 }).notNull(),
   fileSize: int("fileSize").notNull(),
@@ -453,6 +457,32 @@ export const applicationFiles = mysqlTable("application_files", {
 });
 
 export type ApplicationFile = typeof applicationFiles.$inferSelect;
+
+// Save and Return: an applicant's unfinished application, reopened with a private link.
+// Kept apart from applications so it never reaches reviews, rankings or exports.
+export const applicationDrafts = mysqlTable("application_drafts", {
+  id: int("id").autoincrement().primaryKey(),
+  programId: int("programId").notNull(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  applicantName: varchar("applicantName", { length: 255 }).notNull(),
+  applicantEmail: varchar("applicantEmail", { length: 320 }).notNull(),
+  applicantPhone: varchar("applicantPhone", { length: 50 }),
+  organizationName: varchar("organizationName", { length: 255 }),
+  formData: json("formData").$type<Record<string, unknown>>(),
+  currentStep: int("currentStep").default(0).notNull(),
+  // When the applicant last saved. Set by the app, unlike updatedAt, which also moves
+  // when staff send a reminder or the applicant reopens the link.
+  savedAt: timestamp("savedAt"),
+  lastResumedAt: timestamp("lastResumedAt"),
+  reminderCount: int("reminderCount").default(0).notNull(),
+  lastReminderAt: timestamp("lastReminderAt"),
+  lastReminderStatus: mysqlEnum("lastReminderStatus", ["sent", "failed"]),
+  lastReminderError: varchar("lastReminderError", { length: 500 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ApplicationDraft = typeof applicationDrafts.$inferSelect;
 
 // Autosaved staff edits. A draft never changes the live program until Save Changes.
 export const staffEditDrafts = mysqlTable("staff_edit_drafts", {

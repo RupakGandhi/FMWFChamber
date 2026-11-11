@@ -1,11 +1,11 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ListOrdered, ClipboardCheck, Users, Download, FileEdit, Trophy } from "lucide-react";
+import { ListOrdered, ClipboardCheck, Users, Download, FileEdit, Trophy, Hourglass } from "lucide-react";
 
 interface ProgramSubNavProps {
   programId: number;
   programType?: string;
-  activeTab: 'form-builder' | 'applications' | 'checkins' | 'waitlist' | 'top-nominees' | 'export';
+  activeTab: 'form-builder' | 'applications' | 'unfinished' | 'checkins' | 'waitlist' | 'top-nominees' | 'export';
 }
 
 export default function ProgramSubNav({ programId, programType, activeTab }: ProgramSubNavProps) {
@@ -14,6 +14,7 @@ export default function ProgramSubNav({ programId, programType, activeTab }: Pro
   const tabs = [
     { id: 'form-builder', label: 'Form Builder', icon: FileEdit, href: `/admin/programs/${pid}` },
     { id: 'applications', label: 'Applications', icon: ListOrdered, href: `/admin/programs/${pid}/applications` },
+    { id: 'unfinished', label: 'Unfinished', icon: Hourglass, href: `/admin/programs/${pid}/unfinished` },
     ...(programType === 'registration' ? [
       { id: 'checkins', label: 'Check-In', icon: ClipboardCheck, href: `/admin/programs/${pid}/checkins` },
       { id: 'waitlist', label: 'Waitlist', icon: Users, href: `/admin/programs/${pid}/waitlist` },

@@ -94,6 +94,7 @@ export default function ProgramSettings() {
   const [applicationDeadline, setApplicationDeadline] = useState('');
   const [nomineeFieldId, setNomineeFieldId] = useState('');
   const [categoryFieldId, setCategoryFieldId] = useState('');
+  const [saveAndReturnEnabled, setSaveAndReturnEnabled] = useState(false);
   
   // Reviewer management state
   const [addReviewerDialogOpen, setAddReviewerDialogOpen] = useState(false);
@@ -129,6 +130,7 @@ export default function ProgramSettings() {
     applicationDeadline,
     nomineeFieldId,
     categoryFieldId,
+    saveAndReturnEnabled,
   };
   type SettingsDraft = typeof settingsDraft;
 
@@ -153,6 +155,7 @@ export default function ProgramSettings() {
     setApplicationDeadline(values.applicationDeadline);
     setNomineeFieldId(values.nomineeFieldId);
     setCategoryFieldId(values.categoryFieldId);
+    setSaveAndReturnEnabled(values.saveAndReturnEnabled);
   };
 
   const hasUnsavedChanges = baseline !== '' && baseline !== JSON.stringify(settingsDraft);
@@ -182,6 +185,7 @@ export default function ProgramSettings() {
       applicationDeadline: settings.applicationDeadline || '',
       nomineeFieldId: settings.nomineeFieldId || '',
       categoryFieldId: settings.categoryFieldId || '',
+      saveAndReturnEnabled: settings.saveAndReturnEnabled || false,
     };
     applySettings(loaded);
     setBaseRevision(source.revision);
@@ -245,6 +249,7 @@ export default function ProgramSettings() {
           applicationDeadline: applicationDeadline || undefined,
           nomineeFieldId: nomineeFieldId || undefined,
           categoryFieldId: categoryFieldId || undefined,
+          saveAndReturnEnabled,
         },
       });
       
@@ -823,6 +828,22 @@ export default function ProgramSettings() {
           )}
 
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Save and Return</CardTitle>
+            <CardDescription>
+              Applicants can save an unfinished application and come back to it with a private link. Staff can see and remind
+              them from the program's Unfinished tab.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="save-and-return">Let applicants save and return later</Label>
+              <Switch id="save-and-return" checked={saveAndReturnEnabled} onCheckedChange={setSaveAndReturnEnabled} />
+            </div>
+          </CardContent>
+        </Card>
 
         {program.programType === 'awards' && (
           <Card>

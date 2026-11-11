@@ -32,6 +32,7 @@ import AdminArchives from "./pages/admin/Archives";
 import AdminApplicantFlags from "./pages/admin/ApplicantFlags";
 import AdminAwardRestrictions from "./pages/admin/AwardRestrictions";
 import AdminTopNominees from "./pages/admin/TopNominees";
+import AdminUnfinishedApplications from "./pages/admin/UnfinishedApplications";
 import AdminCheckIn from "./pages/admin/CheckIn";
 import AdminWaitlist from "./pages/admin/Waitlist";
 import ParticipantForm from "./pages/public/ParticipantForm";
@@ -86,6 +87,7 @@ function Router() {
       <Route path="/admin/flags" component={AdminApplicantFlags} />
       <Route path="/admin/award-restrictions" component={AdminAwardRestrictions} />
       <Route path="/admin/programs/:programId/top-nominees" component={AdminTopNominees} />
+      <Route path="/admin/programs/:programId/unfinished" component={AdminUnfinishedApplications} />
       <Route path="/admin/programs/:programId/checkins" component={AdminCheckIn} />
       <Route path="/admin/programs/:programId/waitlist" component={AdminWaitlist} />
       <Route path="/admin/guided-tour" component={AdminGuidedTour} />
