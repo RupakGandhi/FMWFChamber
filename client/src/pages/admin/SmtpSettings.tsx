@@ -68,13 +68,13 @@ export default function SmtpSettings() {
   // Load config into form
   useEffect(() => {
     if (config) {
-      setEnabled(config.enabled);
-      setHost(config.host);
-      setPort(config.port);
-      setSecure(config.secure);
-      setUsername(config.username);
-      setFromName(config.fromName);
-      setFromEmail(config.fromEmail);
+      setEnabled(config.enabled ?? false);
+      setHost(config.host ?? "");
+      setPort(config.port ?? 587);
+      setSecure(config.secure ?? false);
+      setUsername(config.username ?? "");
+      setFromName(config.fromName ?? "");
+      setFromEmail(config.fromEmail ?? "");
       setReplyToName(config.replyToName || "");
       setReplyToEmail(config.replyToEmail || "");
       setHasExistingPassword(config.hasPassword);

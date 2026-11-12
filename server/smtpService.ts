@@ -54,6 +54,21 @@ export function decryptSmtpPassword(password: string): string {
 /**
  * Get SMTP configuration from database
  */
+/**
+ * The stored value is a JSON column. MariaDB, which production uses, can hand it back as
+ * text rather than an object, so parse it before reading any field.
+ */
+export function parseStoredSmtpConfig(value: unknown): SmtpConfig | null {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as SmtpConfig;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" ? (value as SmtpConfig) : null;
+}
+
 export async function getSmtpConfig(): Promise<SmtpConfig | null> {
   const db = await getDb();
   if (!db) return null;
@@ -66,7 +81,8 @@ export async function getSmtpConfig(): Promise<SmtpConfig | null> {
       .limit(1);
     
     if (result.length === 0) return null;
-    const storedConfig = result[0].value as SmtpConfig;
+    const storedConfig = parseStoredSmtpConfig(result[0].value);
+    if (!storedConfig) return null;
     return {
       ...storedConfig,
       password: decryptSmtpPassword(storedConfig.password),
